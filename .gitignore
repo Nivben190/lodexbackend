@@ -11,3 +11,6 @@ obj/
 # ONNX weights, downloaded at runtime (~57MB)
 .model-cache/
 *.onnx
+
+# EF Core design-time artifacts
+*.Designer.cs.bak

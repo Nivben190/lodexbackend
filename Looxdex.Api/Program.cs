@@ -39,13 +39,64 @@ builder.Services.Configure<OnnxDetectionOptions>(
     builder.Configuration.GetSection(OnnxDetectionOptions.SectionName));
 
 // ---- persistence ---------------------------------------------------------
-// SQLite for now. Moving to Supabase Postgres in phase 1 is a provider swap here;
-// the entities, queries and controllers are untouched by it.
+// Postgres (Supabase). The connection string comes from configuration:
+// user-secrets locally, ConnectionStrings__Looxdex in the environment on deploy.
 var connectionString = builder.Configuration.GetConnectionString("Looxdex")
-                       ?? "Data Source=looxdex.db";
+                       ?? BuildSupabaseConnectionString(builder.Configuration);
+
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    throw new InvalidOperationException(
+        "No database connection string. Set ConnectionStrings__Looxdex, or Supabase:Host " +
+        "and Supabase:DbPassword.");
+}
 
 builder.Services.AddDbContext<LooxdexDbContext>(options =>
-    options.UseSqlite(connectionString));
+    options
+        .UseNpgsql(connectionString, npgsql => npgsql.EnableRetryOnFailure(3))
+        // Postgres folds unquoted identifiers to lowercase, so EF's default
+        // PascalCase would force quoting in every hand-written query and RLS
+        // policy. snake_case keeps the schema usable outside EF.
+        .UseSnakeCaseNamingConvention());
+
+/// <summary>
+/// Assembles a Supavisor connection string from the project's pieces, so only
+/// the password has to be a secret.
+/// </summary>
+static string? BuildSupabaseConnectionString(IConfiguration config)
+{
+    var host = config["Supabase:Host"];
+    var password = config["Supabase:DbPassword"];
+    var projectRef = config["Supabase:ProjectRef"];
+
+    if (string.IsNullOrWhiteSpace(host) ||
+        string.IsNullOrWhiteSpace(password) ||
+        string.IsNullOrWhiteSpace(projectRef))
+    {
+        return null;
+    }
+
+    // Session mode (5432) rather than transaction mode (6543): this is a
+    // long-lived server with its own connection pool, and session mode keeps
+    // prepared statements working. Transaction-mode pooling shares connections
+    // between requests, which breaks them.
+    var port = config["Supabase:Port"] ?? "5432";
+
+    return new Npgsql.NpgsqlConnectionStringBuilder
+    {
+        Host = host,
+        Port = int.Parse(port),
+        Database = config["Supabase:Database"] ?? "postgres",
+        Username = $"postgres.{projectRef}",
+        Password = password,
+        SslMode = Npgsql.SslMode.Require,
+        Pooling = true,
+        MinPoolSize = 0,
+        MaxPoolSize = 10,
+        Timeout = 20,
+        CommandTimeout = 60
+    }.ConnectionString;
+}
 
 // ---- app services --------------------------------------------------------
 builder.Services.AddHttpContextAccessor();
@@ -57,6 +108,7 @@ builder.Services.AddScoped<IOwnerContext, HeaderOwnerContext>();
 builder.Services.AddScoped<FeedReadService>();
 builder.Services.AddScoped<FeedIngestService>();
 builder.Services.AddScoped<DatabaseSeeder>();
+builder.Services.AddScoped<StarterClosetService>();
 
 builder.Services.AddHttpClient<IImageSource, PexelsImageSource>(client =>
 {

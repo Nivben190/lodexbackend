@@ -16,11 +16,14 @@ public class ClosetController : ControllerBase
 
     private readonly LooxdexDbContext _db;
     private readonly IOwnerContext _owner;
+    private readonly StarterClosetService _starter;
 
-    public ClosetController(LooxdexDbContext db, IOwnerContext owner)
+    public ClosetController(
+        LooxdexDbContext db, IOwnerContext owner, StarterClosetService starter)
     {
         _db = db;
         _owner = owner;
+        _starter = starter;
     }
 
     /// <param name="wishlist">
@@ -35,6 +38,9 @@ public class ClosetController : ControllerBase
         [FromQuery] bool wishlist = false,
         CancellationToken ct = default)
     {
+        // First visit gets a small starter closet so the app is never empty.
+        await _starter.EnsureSeededAsync(_owner.OwnerKey, ct);
+
         var query = _db.ClosetItems
             .AsNoTracking()
             .Where(i => i.OwnerKey == _owner.OwnerKey && i.IsWishlist == wishlist);

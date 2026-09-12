@@ -19,6 +19,8 @@ public class LooxdexDbContext : DbContext
     public DbSet<SuitcaseEntity> Suitcases => Set<SuitcaseEntity>();
     public DbSet<EventGroupEntity> EventGroups => Set<EventGroupEntity>();
     public DbSet<PackingItemEntity> PackingItems => Set<PackingItemEntity>();
+    public DbSet<UploadedImageEntity> UploadedImages => Set<UploadedImageEntity>();
+    public DbSet<OwnerProfileEntity> OwnerProfiles => Set<OwnerProfileEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -82,6 +84,17 @@ public class LooxdexDbContext : DbContext
                 .Metadata.SetValueComparer(embeddingComparer);
         });
 
+        modelBuilder.Entity<UploadedImageEntity>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.HasIndex(e => e.OwnerKey);
+        });
+
+        modelBuilder.Entity<OwnerProfileEntity>(entity =>
+        {
+            entity.HasKey(e => e.OwnerKey);
+        });
+
         modelBuilder.Entity<SuitcaseEntity>(entity =>
         {
             entity.HasIndex(e => e.OwnerKey);
@@ -97,6 +110,37 @@ public class LooxdexDbContext : DbContext
             .WithOne(i => i.EventGroup)
             .HasForeignKey(i => i.EventGroupId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // Npgsql maps DateTime to `timestamp with time zone`, which rejects any
+        // value whose Kind is not Utc. Everything here is UTC by intent, but a
+        // literal like `new DateTime(2026, 10, 2)` is Unspecified and would throw
+        // at write time. Normalising centrally removes that whole class of bug.
+        var utcConverter = new ValueConverter<DateTime, DateTime>(
+            v => v.Kind == DateTimeKind.Utc ? v : DateTime.SpecifyKind(v, DateTimeKind.Utc),
+            v => DateTime.SpecifyKind(v, DateTimeKind.Utc));
+
+        var nullableUtcConverter = new ValueConverter<DateTime?, DateTime?>(
+            v => !v.HasValue
+                ? v
+                : v.Value.Kind == DateTimeKind.Utc
+                    ? v
+                    : DateTime.SpecifyKind(v.Value, DateTimeKind.Utc),
+            v => v.HasValue ? DateTime.SpecifyKind(v.Value, DateTimeKind.Utc) : v);
+
+        foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+        {
+            foreach (var property in entityType.GetProperties())
+            {
+                if (property.ClrType == typeof(DateTime))
+                {
+                    property.SetValueConverter(utcConverter);
+                }
+                else if (property.ClrType == typeof(DateTime?))
+                {
+                    property.SetValueConverter(nullableUtcConverter);
+                }
+            }
+        }
 
         base.OnModelCreating(modelBuilder);
     }

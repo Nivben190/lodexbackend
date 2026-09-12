@@ -35,7 +35,9 @@ public class DatabaseSeeder
         {
             _db.ClosetItems.AddRange(_seed.ClosetItems.Select(i => new ClosetItemEntity
             {
-                Id = i.Id,
+                // No explicit Id: assigning one leaves Postgres's identity
+                // sequence at its start, so the next insert collides on the
+                // primary key. Nothing references these ids any more.
                 OwnerKey = owner,
                 Name = i.Name,
                 ImageUrl = i.ImageUrl,
@@ -53,40 +55,7 @@ public class DatabaseSeeder
             _logger.LogInformation("Seeded {Count} closet items.", _seed.ClosetItems.Count);
         }
 
-        if (!await _db.Suitcases.AnyAsync(ct))
-        {
-            foreach (var s in _seed.Suitcases)
-            {
-                _db.Suitcases.Add(new SuitcaseEntity
-                {
-                    OwnerKey = owner,
-                    TripName = s.TripName,
-                    Destination = s.Destination,
-                    CoverImageUrl = s.CoverImageUrl,
-                    StartDate = s.StartDate,
-                    EndDate = s.EndDate,
-                    ExpectedTempLow = s.ExpectedTempLow,
-                    ExpectedTempHigh = s.ExpectedTempHigh,
-                    EventGroups = s.EventGroups.Select((g, index) => new EventGroupEntity
-                    {
-                        EventKey = g.EventKey,
-                        EventLabel = g.EventLabel,
-                        Icon = g.Icon,
-                        SortOrder = index,
-                        Items = g.Items.Select(i => new PackingItemEntity
-                        {
-                            ClosetItemId = i.ClosetItemId,
-                            Name = i.Name,
-                            ImageUrl = i.ImageUrl,
-                            Category = i.Category,
-                            IsPacked = i.IsPacked
-                        }).ToList()
-                    }).ToList()
-                });
-            }
-
-            await _db.SaveChangesAsync(ct);
-            _logger.LogInformation("Seeded {Count} suitcases.", _seed.Suitcases.Count);
-        }
+        // Suitcases are no longer part of the product, so they are not seeded.
+        // The tables remain for now; removing them is a separate migration.
     }
 }
