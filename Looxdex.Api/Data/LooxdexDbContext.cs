@@ -21,6 +21,7 @@ public class LooxdexDbContext : DbContext
     public DbSet<PackingItemEntity> PackingItems => Set<PackingItemEntity>();
     public DbSet<UploadedImageEntity> UploadedImages => Set<UploadedImageEntity>();
     public DbSet<OwnerProfileEntity> OwnerProfiles => Set<OwnerProfileEntity>();
+    public DbSet<OutfitEntity> Outfits => Set<OutfitEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -46,6 +47,12 @@ public class LooxdexDbContext : DbContext
                 .WithOne(d => d.FeedPost)
                 .HasForeignKey(d => d.FeedPostId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<OutfitEntity>(entity =>
+        {
+            // Every read is "this wearer's looks, newest first".
+            entity.HasIndex(e => new { e.OwnerKey, e.UpdatedAt });
         });
 
         modelBuilder.Entity<DetectedItemEntity>(entity =>
