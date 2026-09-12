@@ -36,6 +36,12 @@ public class ClosetItemEntity
 
     public bool IsFavorite { get; set; }
 
+    /// <summary>
+    /// Wanted rather than owned. The wardrobe's wishlist tab reads this, so a
+    /// piece spotted in a look can be kept without claiming it is in the closet.
+    /// </summary>
+    public bool IsWishlist { get; set; }
+
     public DateTime AddedAt { get; set; } = DateTime.UtcNow;
 
     /// <summary>CLIP embedding used to match closet items against detected items.</summary>

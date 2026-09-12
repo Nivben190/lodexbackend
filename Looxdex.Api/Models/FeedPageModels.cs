@@ -13,3 +13,16 @@ public class FeedPage
     /// <summary>Total posts in the library, for display only.</summary>
     public int TotalCount { get; set; }
 }
+
+/// <summary>A folder saved looks can be filed under, with its current size.</summary>
+public class SavedFolder
+{
+    public string Name { get; set; } = string.Empty;
+    public int Count { get; set; }
+}
+
+public class SetFolderRequest
+{
+    /// <summary>Null or empty clears the folder.</summary>
+    public string? Folder { get; set; }
+}

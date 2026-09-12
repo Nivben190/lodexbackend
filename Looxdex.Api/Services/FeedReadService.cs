@@ -21,7 +21,12 @@ public class FeedReadService
     }
 
     public async Task<FeedPage> GetPageAsync(
-        string? cursor, int? limit, string? search, bool savedOnly, CancellationToken ct)
+        string? cursor,
+        int? limit,
+        string? search,
+        bool savedOnly,
+        string? folder,
+        CancellationToken ct)
     {
         var pageSize = Math.Clamp(limit ?? DefaultPageSize, 1, MaxPageSize);
         var ownerKey = _owner.OwnerKey;
@@ -30,6 +35,14 @@ public class FeedReadService
             .Where(s => s.OwnerKey == ownerKey)
             .Select(s => s.FeedPostId)
             .ToHashSetAsync(ct);
+
+        // Folder narrows the saved set; it is meaningless outside the saved view.
+        var folderIds = savedOnly && !string.IsNullOrWhiteSpace(folder)
+            ? await _db.SavedPosts
+                .Where(s => s.OwnerKey == ownerKey && s.Folder == folder)
+                .Select(s => s.FeedPostId)
+                .ToHashSetAsync(ct)
+            : null;
 
         var query = _db.FeedPosts
             .AsNoTracking()
@@ -40,7 +53,8 @@ public class FeedReadService
         if (savedOnly)
         {
             // Materialised above, so this stays a single translated IN clause.
-            query = query.Where(p => savedIds.Contains(p.Id));
+            var ids = folderIds ?? savedIds;
+            query = query.Where(p => ids.Contains(p.Id));
         }
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -135,6 +149,48 @@ public class FeedReadService
 
         await _db.SaveChangesAsync(ct);
         return ToDto(entity, isSavedNow);
+    }
+
+    /// <summary>
+    /// Files a saved look under a folder, or clears it when folder is null.
+    /// Saves the post first if it was not already saved, so filing doubles as saving.
+    /// </summary>
+    public async Task<bool> SetFolderAsync(int postId, string? folder, CancellationToken ct)
+    {
+        var ownerKey = _owner.OwnerKey;
+
+        if (!await _db.FeedPosts.AnyAsync(p => p.Id == postId, ct)) return false;
+
+        var saved = await _db.SavedPosts
+            .FirstOrDefaultAsync(s => s.OwnerKey == ownerKey && s.FeedPostId == postId, ct);
+
+        if (saved is null)
+        {
+            saved = new SavedPostEntity
+            {
+                OwnerKey = ownerKey,
+                FeedPostId = postId,
+                SavedAt = DateTime.UtcNow
+            };
+            _db.SavedPosts.Add(saved);
+        }
+
+        saved.Folder = string.IsNullOrWhiteSpace(folder) ? null : folder.Trim();
+        await _db.SaveChangesAsync(ct);
+        return true;
+    }
+
+    /// <summary>Folders in use, with how many looks each holds.</summary>
+    public async Task<List<SavedFolder>> GetFoldersAsync(CancellationToken ct)
+    {
+        var ownerKey = _owner.OwnerKey;
+
+        return await _db.SavedPosts
+            .Where(s => s.OwnerKey == ownerKey && s.Folder != null)
+            .GroupBy(s => s.Folder!)
+            .Select(g => new SavedFolder { Name = g.Key, Count = g.Count() })
+            .OrderByDescending(f => f.Count)
+            .ToListAsync(ct);
     }
 
     private static bool TryParseCursor(string? cursor, out long rank, out int id)

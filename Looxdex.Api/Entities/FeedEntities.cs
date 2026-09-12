@@ -142,5 +142,12 @@ public class SavedPostEntity
     public int FeedPostId { get; set; }
     public FeedPostEntity? FeedPost { get; set; }
 
+    /// <summary>
+    /// Folder the save was filed under, e.g. "פריז". Null means unfiled, which
+    /// is what the "הכל" tab shows alongside everything else.
+    /// </summary>
+    [MaxLength(60)]
+    public string? Folder { get; set; }
+
     public DateTime SavedAt { get; set; } = DateTime.UtcNow;
 }

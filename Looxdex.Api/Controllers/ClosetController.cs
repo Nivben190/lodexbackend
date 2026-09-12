@@ -23,16 +23,21 @@ public class ClosetController : ControllerBase
         _owner = owner;
     }
 
+    /// <param name="wishlist">
+    /// false (default) returns owned pieces, true returns the wishlist. The two
+    /// are separate tabs in the wardrobe, so a request never mixes them.
+    /// </param>
     [HttpGet]
     public async Task<ActionResult<IEnumerable<ClosetItem>>> GetCloset(
         [FromQuery] string? category,
         [FromQuery] string? color,
         [FromQuery] string? season,
+        [FromQuery] bool wishlist = false,
         CancellationToken ct = default)
     {
         var query = _db.ClosetItems
             .AsNoTracking()
-            .Where(i => i.OwnerKey == _owner.OwnerKey);
+            .Where(i => i.OwnerKey == _owner.OwnerKey && i.IsWishlist == wishlist);
 
         if (!string.IsNullOrWhiteSpace(category) && category != "הכל")
             query = query.Where(i => i.Category == category);
@@ -80,6 +85,7 @@ public class ClosetController : ControllerBase
             Season = request.Season,
             Brand = request.Brand,
             Formality = request.Formality,
+            IsWishlist = request.IsWishlist,
             AddedAt = DateTime.UtcNow
         };
 
@@ -87,6 +93,22 @@ public class ClosetController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToDto(entity));
+    }
+
+    /// <summary>Moves an item between the wishlist and the closet proper.</summary>
+    [HttpPatch("{id:int}/wishlist")]
+    public async Task<ActionResult<ClosetItem>> SetWishlist(
+        int id, [FromQuery] bool value, CancellationToken ct)
+    {
+        var item = await _db.ClosetItems
+            .FirstOrDefaultAsync(i => i.Id == id && i.OwnerKey == _owner.OwnerKey, ct);
+
+        if (item is null) return NotFound();
+
+        item.IsWishlist = value;
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(ToDto(item));
     }
 
     [HttpDelete("{id:int}")]
@@ -114,6 +136,7 @@ public class ClosetController : ControllerBase
         Brand = e.Brand,
         Formality = e.Formality,
         IsFavorite = e.IsFavorite,
+        IsWishlist = e.IsWishlist,
         AddedAt = e.AddedAt
     };
 }

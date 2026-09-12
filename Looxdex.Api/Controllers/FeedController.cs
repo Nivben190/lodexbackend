@@ -25,10 +25,27 @@ public class FeedController : ControllerBase
         [FromQuery] int? limit,
         [FromQuery(Name = "q")] string? search,
         [FromQuery] bool saved = false,
+        [FromQuery] string? folder = null,
         CancellationToken ct = default)
     {
-        var page = await _feed.GetPageAsync(cursor, limit, search, saved, ct);
+        var page = await _feed.GetPageAsync(cursor, limit, search, saved, folder, ct);
         return Ok(page);
+    }
+
+    /// <summary>Folders the owner has filed saved looks under.</summary>
+    [HttpGet("folders")]
+    public async Task<ActionResult<IEnumerable<SavedFolder>>> GetFolders(CancellationToken ct)
+    {
+        return Ok(await _feed.GetFoldersAsync(ct));
+    }
+
+    /// <summary>Files a saved look under a folder. Saves it first if needed.</summary>
+    [HttpPatch("{id:int}/folder")]
+    public async Task<IActionResult> SetFolder(
+        int id, [FromBody] SetFolderRequest request, CancellationToken ct)
+    {
+        var ok = await _feed.SetFolderAsync(id, request.Folder, ct);
+        return ok ? NoContent() : NotFound();
     }
 
     [HttpGet("{id:int}")]
