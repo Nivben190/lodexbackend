@@ -204,26 +204,6 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         var mapHeight = labels.GetLength(0);
         var mapWidth = labels.GetLength(1);
 
-        // Grow the box before masking: YOLOS clips sleeves and hems, and out there
-        // the mask — not the rectangle — is what decides where the garment ends.
-        var pad = _options.BoxPadding;
-        var boxX = hit.X / 100 * image.Width;
-        var boxY = hit.Y / 100 * image.Height;
-        var boxW = hit.Width / 100 * image.Width;
-        var boxH = hit.Height / 100 * image.Height;
-
-        var region = Rectangle.Intersect(
-            new Rectangle(
-                (int)(boxX - boxW * pad),
-                (int)(boxY - boxH * pad),
-                (int)(boxW * (1 + pad * 2)),
-                (int)(boxH * (1 + pad * 2))),
-            image.Bounds);
-
-        if (region.Width < 8 || region.Height < 8) return null;
-
-        using var crop = image.Clone(c => c.Crop(region));
-
         // Membership at map resolution, sampled bilinearly below. Taking the argmax
         // per pixel instead would staircase every edge into ten-pixel blocks.
         var membership = new float[mapHeight, mapWidth];
@@ -231,7 +211,32 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         for (var x = 0; x < mapWidth; x++)
             membership[y, x] = Array.IndexOf(classes, labels[y, x]) >= 0 ? 1f : 0f;
 
-        KeepLargestBlobs(membership, mapHeight, mapWidth);
+        // The box says which garment; the mask says how far it goes. Keeping only
+        // the blobs the box actually lands on is what separates this woman's coat
+        // from the one standing beside her, and cropping to those blobs rather
+        // than to the box is what stops a trouser leg being cut off at the knee.
+        var box = new Rectangle(
+            (int)Math.Round(hit.X / 100 * mapWidth),
+            (int)Math.Round(hit.Y / 100 * mapHeight),
+            Math.Max(1, (int)Math.Round(hit.Width / 100 * mapWidth)),
+            Math.Max(1, (int)Math.Round(hit.Height / 100 * mapHeight)));
+
+        var extent = KeepBlobsUnder(membership, mapHeight, mapWidth, box);
+        if (extent is null) return null;
+
+        // A margin of one cell: the blob edge is the mask's idea of the hem, and
+        // the soft ramp below needs somewhere to fall off.
+        var region = Rectangle.Intersect(
+            new Rectangle(
+                (int)((extent.Value.X - 1) / (double)mapWidth * image.Width),
+                (int)((extent.Value.Y - 1) / (double)mapHeight * image.Height),
+                (int)((extent.Value.Width + 2) / (double)mapWidth * image.Width),
+                (int)((extent.Value.Height + 2) / (double)mapHeight * image.Height)),
+            image.Bounds);
+
+        if (region.Width < 8 || region.Height < 8) return null;
+
+        using var crop = image.Clone(c => c.Crop(region));
 
         int minX = crop.Width, minY = crop.Height, maxX = -1, maxY = -1;
 
@@ -291,9 +296,9 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
 
         var tileSize = _options.TileSize;
         var inset = (int)(tileSize * _options.TileInset);
-        var box = tileSize - inset * 2;
+        var fitted = tileSize - inset * 2;
 
-        var scale = Math.Min(box / (double)trimmed.Width, box / (double)trimmed.Height);
+        var scale = Math.Min(fitted / (double)trimmed.Width, fitted / (double)trimmed.Height);
         var width = Math.Max(1, (int)(trimmed.Width * scale));
         var height = Math.Max(1, (int)(trimmed.Height * scale));
 
@@ -366,14 +371,25 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
     }
 
     /// <summary>
-    /// Drops stray islands from a membership map, keeping the biggest blob and any
-    /// comparable sibling — a pair of shoes is two blobs, a speck of shirt-coloured
-    /// wall behind the model is not.
+    /// Keeps only the parts of the mask that belong to the garment the detector
+    /// pointed at, and reports how far they reach.
+    ///
+    /// Blobs are whole connected regions of the class, found across the entire
+    /// image rather than inside the box, so a coat that runs past the box is kept
+    /// whole. A blob survives when the box covers a real share of it, or when it
+    /// fills a real share of the box: the first keeps a long garment the box only
+    /// caught the top of, the second keeps a jacket in two halves either side of
+    /// an arm. Everything else — the next person along, a speck of wall the same
+    /// colour — is erased.
+    ///
+    /// Returns the bounds of what survived, in map cells, or null if nothing did.
     /// </summary>
-    private static void KeepLargestBlobs(float[,] membership, int height, int width)
+    private static Rectangle? KeepBlobsUnder(
+        float[,] membership, int height, int width, Rectangle box)
     {
         var blobIds = new int[height, width];
-        var sizes = new List<int> { 0 };   // index 0 is "unassigned"
+        var sizes = new List<int> { 0 };      // index 0 is "unassigned"
+        var inBox = new List<int> { 0 };
         var stack = new Stack<(int Y, int X)>();
 
         for (var y = 0; y < height; y++)
@@ -384,6 +400,8 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
 
                 var id = sizes.Count;
                 var size = 0;
+                var covered = 0;
+
                 stack.Push((y, x));
                 blobIds[y, x] = id;
 
@@ -391,6 +409,7 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
                 {
                     var (cy, cx) = stack.Pop();
                     size++;
+                    if (box.Contains(cx, cy)) covered++;
 
                     for (var dy = -1; dy <= 1; dy++)
                     for (var dx = -1; dx <= 1; dx++)
@@ -407,20 +426,48 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
                 }
 
                 sizes.Add(size);
+                inBox.Add(covered);
             }
         }
 
-        if (sizes.Count <= 2) return;   // nothing found, or a single blob already
+        var boxArea = Math.Max(1, box.Width * box.Height);
+        var keep = new bool[sizes.Count];
+        var kept = false;
 
-        var largest = sizes.Skip(1).Max();
-        var floor = largest * 0.2;
+        for (var id = 1; id < sizes.Count; id++)
+        {
+            var shareOfBlob = inBox[id] / (double)sizes[id];
+            var shareOfBox = inBox[id] / (double)boxArea;
+
+            if (shareOfBlob < 0.25 && shareOfBox < 0.12) continue;
+
+            keep[id] = true;
+            kept = true;
+        }
+
+        if (!kept) return null;
+
+        int minX = width, minY = height, maxX = -1, maxY = -1;
 
         for (var y = 0; y < height; y++)
         for (var x = 0; x < width; x++)
         {
             var id = blobIds[y, x];
-            if (id != 0 && sizes[id] < floor) membership[y, x] = 0f;
+            if (id == 0) continue;
+
+            if (!keep[id])
+            {
+                membership[y, x] = 0f;
+                continue;
+            }
+
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
         }
+
+        return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 
     /// <summary>Bilinear read of the membership map at a fractional cell position.</summary>

@@ -120,12 +120,6 @@ public class GarmentCutoutOptions
     public double TileInset { get; set; } = 0.09;
 
     /// <summary>
-    /// Grow the detection box before masking. YOLOS clips sleeves and hems, and
-    /// outside the box the mask is what stops the crop running away.
-    /// </summary>
-    public double BoxPadding { get; set; } = 0.35;
-
-    /// <summary>
     /// Below this many mask pixels the cutout is thin, blocky and worse than the
     /// plain crop — belts and thin straps land here — so no tile is written.
     /// </summary>
