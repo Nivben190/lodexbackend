@@ -72,9 +72,13 @@ public class LooksController : ControllerBase
             return BadRequest(new { error = "הקובץ אינו תמונה תקינה." });
         }
 
+        // Taken before anything is done to the bytes: the look is identified by the
+        // file that was handed to us, so re-importing it after the processing
+        // changes still lands on the row that is already there.
+        var fingerprint = Fingerprint(bytes);
+
         // The app's own uploader downscales before sending; an import has no such
-        // manners — these arrive straight off a camera roll at 3000px and upward,
-        // which is megabytes per row and a slow feed for no visible gain.
+        // manners — these arrive straight off a camera roll at 3000px and upward.
         (bytes, contentType) = StoredImages.Downscale(bytes, contentType);
 
         var embed = string.IsNullOrWhiteSpace(sourceUrl)
@@ -97,7 +101,6 @@ public class LooksController : ControllerBase
         // Keyed on the image, not on the post. A carousel is one post holding ten
         // different outfits, and each of those is a look in its own right — but the
         // same photo sent twice is still the same look.
-        var fingerprint = Fingerprint(bytes);
         var externalId = embed is null ? fingerprint : $"{embed.Shortcode}-{fingerprint}";
 
         var duplicate = await _db.FeedPosts

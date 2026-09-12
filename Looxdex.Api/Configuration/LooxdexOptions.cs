@@ -130,11 +130,44 @@ public class GarmentCutoutOptions
 
     public string FileName { get; set; } = "segformer-b2-clothes-quantized.onnx";
 
-    /// <summary>The processor this model was exported with resizes to a square 512.</summary>
-    public int InputSize { get; set; } = 512;
+    /// <summary>
+    /// Segmentation input. The processor was exported at 512, which puts one mask
+    /// cell every ten pixels of the photo — an outline accurate to about a finger's
+    /// width, which is exactly what made the tiles look torn out rather than cut.
+    /// SegFormer takes any multiple of 32, and doubling it quarters the cell.
+    /// </summary>
+    public int InputSize { get; set; } = 1024;
 
     /// <summary>Side of the square tile written for each item.</summary>
-    public int TileSize { get; set; } = 600;
+    public int TileSize { get; set; } = 768;
+
+    /// <summary>
+    /// Radius of the edge refinement, in pixels of the cropped garment. The coarse
+    /// mask is pulled onto the real boundary by looking at where the photo's own
+    /// colours change; this is how far it may look to find that boundary.
+    /// </summary>
+    public int EdgeRefineRadius { get; set; } = 10;
+
+    /// <summary>
+    /// Shortest side a garment must occupy in the photo before a cutout is worth
+    /// making. Below it there is nothing to enlarge — the tile would be a blur,
+    /// and a plain crop at least reads as a photograph of something.
+    /// </summary>
+    public int MinGarmentPixels { get; set; } = 220;
+
+    /// <summary>
+    /// How much of its own outline a garment must fill to be shown as a cutout.
+    /// Below this the shape is fragments — a sleeve here, a trouser leg there —
+    /// and no amount of sharpening makes fragments legible.
+    /// </summary>
+    public double MinShapeFill { get; set; } = 0.38;
+
+    /// <summary>
+    /// Confidence required when there is no one in the photo. The models are both
+    /// out of their depth on a flat-lay, and this is what stops a handbag on a bed
+    /// being filed, with a straight face, as a pair of trousers.
+    /// </summary>
+    public double FlatLayScore { get; set; } = 0.90;
 
     /// <summary>Transparent margin inside the tile, as a fraction of its side.</summary>
     public double TileInset { get; set; } = 0.09;

@@ -17,6 +17,7 @@ public class DetectionWorker : BackgroundService
 {
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly OnnxDetectionOptions _options;
+    private readonly GarmentCutoutOptions _cutoutOptions;
     private readonly ILogger<DetectionWorker> _logger;
 
     /// <summary>
@@ -29,10 +30,12 @@ public class DetectionWorker : BackgroundService
     public DetectionWorker(
         IServiceScopeFactory scopeFactory,
         IOptions<OnnxDetectionOptions> options,
+        IOptions<GarmentCutoutOptions> cutoutOptions,
         ILogger<DetectionWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _options = options.Value;
+        _cutoutOptions = cutoutOptions.Value;
         _logger = logger;
     }
 
@@ -148,12 +151,25 @@ public class DetectionWorker : BackgroundService
 
                     // Cut each garment out of the same photo while it is in hand, so
                     // the feed can show product tiles instead of slices of the scene.
-                    var rendered = await cutouts.RenderAsync(photo, hits, ct);
+                    var pass = await cutouts.RenderAsync(photo, hits, ct);
+                    var rendered = pass.Items;
 
                     for (var i = 0; i < hits.Count; i++)
                     {
                         var h = hits[i];
                         rendered.TryGetValue(i, out var render);
+
+                        // Nobody in the photo: both models are guessing outside what
+                        // they were trained on, so only an unmistakable detection
+                        // survives. This is the difference between a handbag filed as
+                        // a handbag and a handbag filed as a pair of trousers.
+                        if (!pass.PersonPresent && h.Score < _cutoutOptions.FlatLayScore)
+                        {
+                            _logger.LogInformation(
+                                "Dropped {Label} at {Score:P0} on post {PostId}: no one in the photo.",
+                                h.Label, h.Score, post.Id);
+                            continue;
+                        }
 
                         // Two models have to agree before a middling detection is
                         // believed. Where the segmenter knows the garment and finds
@@ -267,7 +283,7 @@ public class DetectionWorker : BackgroundService
                     d.BoxX, d.BoxY, d.BoxWidth, d.BoxHeight))
                 .ToList();
 
-            var results = await cutouts.RenderAsync(photo, hits, ct);
+            var results = (await cutouts.RenderAsync(photo, hits, ct)).Items;
 
             for (var i = 0; i < items.Count; i++)
             {

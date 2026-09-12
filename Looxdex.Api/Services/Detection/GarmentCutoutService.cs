@@ -29,6 +29,14 @@ public enum MaskVerdict
 /// <param name="Cutout">The tile, when the mask was solid enough to make one worth showing.</param>
 public record GarmentRender(MaskVerdict Verdict, GarmentCutout? Cutout);
 
+/// <param name="PersonPresent">
+/// Whether anyone is wearing anything in this photo. The segmenter parses people,
+/// so on a photo of a handbag on a bed its output is noise that can agree with
+/// anything — and the detector, trained on worn clothing, is guessing too.
+/// </param>
+/// <param name="Items">What was found for each detection, by index.</param>
+public record CutoutPass(bool PersonPresent, IReadOnlyDictionary<int, GarmentRender> Items);
+
 public interface IGarmentCutoutService
 {
     bool Enabled { get; }
@@ -38,7 +46,7 @@ public interface IGarmentCutoutService
     /// really there, and its cutout when one can be made. Keyed by the index of
     /// the hit in <paramref name="hits"/>.
     /// </summary>
-    Task<IReadOnlyDictionary<int, GarmentRender>> RenderAsync(
+    Task<CutoutPass> RenderAsync(
         byte[] photo, IReadOnlyList<DetectionHit> hits, CancellationToken ct);
 }
 
@@ -110,10 +118,12 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
 
     public bool Enabled => _options.Enabled;
 
-    public async Task<IReadOnlyDictionary<int, GarmentRender>> RenderAsync(
+    public async Task<CutoutPass> RenderAsync(
         byte[] photo, IReadOnlyList<DetectionHit> hits, CancellationToken ct)
     {
-        var empty = (IReadOnlyDictionary<int, GarmentRender>)new Dictionary<int, GarmentRender>();
+        // Nothing known either way: assume a person, so a failure here cannot
+        // quietly throw away everything the detector found.
+        var empty = new CutoutPass(true, new Dictionary<int, GarmentRender>());
 
         if (!Enabled || hits.Count == 0) return empty;
 
@@ -125,6 +135,12 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         {
             using var image = Image.Load<Rgba32>(photo);
             var labels = Segment(session, image);
+            var personPresent = HasPerson(labels);
+
+            if (!personPresent)
+            {
+                _logger.LogInformation("No one is wearing anything in this photo.");
+            }
 
             var results = new Dictionary<int, GarmentRender>();
 
@@ -141,7 +157,7 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
                 results[i] = Render(image, hits[i], classes, labels);
             }
 
-            return results;
+            return new CutoutPass(personPresent, results);
         }
         catch (Exception ex)
         {
@@ -219,6 +235,30 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         return map;
     }
 
+    /// <summary>
+    /// Whether the photo has a person in it, by looking for the parts of one:
+    /// a face, hair, an arm, a leg. Their absence means this is a flat-lay or a
+    /// product shot, and everything the parser says about it should be distrusted.
+    /// </summary>
+    private static bool HasPerson(byte[,] labels)
+    {
+        // Hair, face, both legs, both arms.
+        ReadOnlySpan<byte> body = stackalloc byte[] { 2, 11, 12, 13, 14, 15 };
+
+        var height = labels.GetLength(0);
+        var width = labels.GetLength(1);
+        var found = 0;
+
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            if (body.Contains(labels[y, x])) found++;
+        }
+
+        // A hand at the edge of the frame is still a person; a stray cell is not.
+        return found > width * height * 0.005;
+    }
+
     /// <summary>Masks one garment out of the photo and lays it on a square tile.</summary>
     private GarmentRender Render(Image<Rgba32> image, DetectionHit hit, int[] classes, byte[,] labels)
     {
@@ -265,7 +305,37 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
 
         using var crop = image.Clone(c => c.Crop(region));
 
-        int minX = crop.Width, minY = crop.Height, maxX = -1, maxY = -1;
+        // The coarse stencil first: one value per pixel, read from the mask grid.
+        var width = crop.Width;
+        var height = crop.Height;
+        var alpha = new float[width * height];
+        var guide = new float[width * height];
+
+        for (var y = 0; y < height; y++)
+        {
+            var v = (y + region.Y + 0.5) / image.Height * mapHeight - 0.5;
+
+            for (var x = 0; x < width; x++)
+            {
+                var u = (x + region.X + 0.5) / image.Width * mapWidth - 0.5;
+                var m = Sample(membership, u, v, mapWidth, mapHeight);
+
+                var i = y * width + x;
+                alpha[i] = (float)Math.Clamp((m - 0.45) / 0.15, 0, 1);
+
+                var pixel = crop[x, y];
+                guide[i] = (0.299f * pixel.R + 0.587f * pixel.G + 0.114f * pixel.B) / 255f;
+            }
+        }
+
+        // Then pull that stencil onto the garment's real edge. The mask knows where
+        // the trousers are to within about a finger's width; the photograph knows
+        // exactly where they stop. Filtering the mask against the image moves the
+        // boundary to where the picture actually changes, which is the difference
+        // between a cut-out and something torn out by hand.
+        GuidedRefine(alpha, guide, width, height, _options.EdgeRefineRadius);
+
+        int minX = width, minY = height, maxX = -1, maxY = -1;
 
         // Colour is accumulated per luminance bin so the naming pass can work from
         // the lit face of the garment. A flat average over every opaque pixel drags
@@ -276,20 +346,16 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         var lumaCount = new int[256];
         var opaque = 0;
 
-        for (var y = 0; y < crop.Height; y++)
+        for (var y = 0; y < height; y++)
         {
-            var v = (y + region.Y + 0.5) / image.Height * mapHeight - 0.5;
-
-            for (var x = 0; x < crop.Width; x++)
+            for (var x = 0; x < width; x++)
             {
-                var u = (x + region.X + 0.5) / image.Width * mapWidth - 0.5;
-                var m = Sample(membership, u, v, mapWidth, mapHeight);
+                // Steepened around the halfway mark: the filter leaves a soft ramp
+                // everywhere, and a garment edge is a line, not a gradient.
+                var refined = Math.Clamp((alpha[y * width + x] - 0.42) / 0.22, 0, 1);
 
-                // A narrow ramp: wide enough to soften the staircase, not so wide
-                // that a halo of the room survives around the shoulders.
-                var alpha = Math.Clamp((m - 0.45) / 0.15, 0, 1);
                 var pixel = crop[x, y];
-                pixel.A = (byte)(alpha * 255);
+                pixel.A = (byte)(refined * 255);
                 crop[x, y] = pixel;
 
                 if (pixel.A <= 32) continue;
@@ -325,26 +391,62 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         using var trimmed = crop.Clone(c => c.Crop(
             new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1)));
 
+        // A garment that occupies a couple of hundred pixels of the photo cannot be
+        // made into a tile; enlarging it only makes a bigger blur. Better to hand
+        // back the crop, which at least reads as a photograph of something.
+        if (Math.Min(trimmed.Width, trimmed.Height) < _options.MinGarmentPixels)
+        {
+            _logger.LogInformation(
+                "{Label} is only {Width}x{Height} in the photo; keeping the crop.",
+                hit.Label, trimmed.Width, trimmed.Height);
+
+            return new GarmentRender(MaskVerdict.Confirmed, null);
+        }
+
+        // How much of its own bounding box the garment actually fills. A dress fills
+        // most of it; two scraps of trouser leg either side of a coat fill very
+        // little, and that is exactly the tile nobody can read. The crop of the same
+        // region at least shows the garment on the person, in context.
+        var fill = opaque / (double)(trimmed.Width * trimmed.Height);
+
+        if (fill < _options.MinShapeFill)
+        {
+            _logger.LogInformation(
+                "{Label} fills only {Fill:P0} of its outline; too broken to read, keeping the crop.",
+                hit.Label, fill);
+
+            return new GarmentRender(MaskVerdict.Confirmed, null);
+        }
+
         var tileSize = _options.TileSize;
         var inset = (int)(tileSize * _options.TileInset);
         var fitted = tileSize - inset * 2;
 
-        var scale = Math.Min(fitted / (double)trimmed.Width, fitted / (double)trimmed.Height);
-        var width = Math.Max(1, (int)(trimmed.Width * scale));
-        var height = Math.Max(1, (int)(trimmed.Height * scale));
+        // Never past 1:1. Beyond that the tile is inventing detail, and a garment
+        // shown slightly small on its tile looks deliberate where a soft one does
+        // not.
+        var scale = Math.Min(
+            Math.Min(fitted / (double)trimmed.Width, fitted / (double)trimmed.Height),
+            1.0);
+        var drawWidth = Math.Max(1, (int)(trimmed.Width * scale));
+        var drawHeight = Math.Max(1, (int)(trimmed.Height * scale));
 
-        using var scaled = trimmed.Clone(c => c.Resize(width, height, KnownResamplers.Bicubic));
+        // Lanczos on the way down: a garment shrunk with a soft filter loses the
+        // weave, and the weave is most of what makes it read as cloth.
+        using var scaled = trimmed.Clone(c => c.Resize(
+            drawWidth, drawHeight, KnownResamplers.Lanczos3));
 
         // Transparent rather than a painted background: the tile colour belongs to
         // the client, which has both a light and a dark theme to satisfy.
         using var tile = new Image<Rgba32>(tileSize, tileSize, Color.Transparent);
-        tile.Mutate(c => c.DrawImage(scaled, new Point((tileSize - width) / 2, (tileSize - height) / 2), 1f));
+        tile.Mutate(c => c.DrawImage(
+            scaled, new Point((tileSize - drawWidth) / 2, (tileSize - drawHeight) / 2), 1f));
 
         using var buffer = new MemoryStream();
         tile.Save(buffer, new WebpEncoder
         {
             FileFormat = WebpFileFormatType.Lossy,
-            Quality = 72
+            Quality = 84
         });
 
         var dominant = DominantColor(lumaR, lumaG, lumaB, lumaCount, opaque);
@@ -501,6 +603,112 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         }
 
         return new Rectangle(minX, minY, maxX - minX + 1, maxY - minY + 1);
+    }
+
+    /// <summary>
+    /// Snaps a coarse mask onto the edges of the image it came from.
+    ///
+    /// This is a guided filter: within a window, it fits the mask to the image as a
+    /// straight line, alpha ≈ a·luminance + b, and keeps the fitted value. Where the
+    /// photograph has an edge the fit follows it; where the photograph is flat the
+    /// fit flattens, so noise inside the garment is smoothed while its outline
+    /// sharpens. The whole thing is four box filters, each one a pair of running
+    /// sums, so the cost does not depend on the radius.
+    /// </summary>
+    private static void GuidedRefine(float[] alpha, float[] guide, int width, int height, int radius)
+    {
+        const float epsilon = 1e-4f;   // tolerance for "this window is flat"
+
+        var meanGuide = BoxBlur(guide, width, height, radius);
+        var meanAlpha = BoxBlur(alpha, width, height, radius);
+
+        var guideSquared = new float[guide.Length];
+        var product = new float[guide.Length];
+
+        for (var i = 0; i < guide.Length; i++)
+        {
+            guideSquared[i] = guide[i] * guide[i];
+            product[i] = guide[i] * alpha[i];
+        }
+
+        var meanGuideSquared = BoxBlur(guideSquared, width, height, radius);
+        var meanProduct = BoxBlur(product, width, height, radius);
+
+        var a = new float[guide.Length];
+        var b = new float[guide.Length];
+
+        for (var i = 0; i < guide.Length; i++)
+        {
+            var variance = meanGuideSquared[i] - meanGuide[i] * meanGuide[i];
+            var covariance = meanProduct[i] - meanGuide[i] * meanAlpha[i];
+
+            a[i] = covariance / (variance + epsilon);
+            b[i] = meanAlpha[i] - a[i] * meanGuide[i];
+        }
+
+        var meanA = BoxBlur(a, width, height, radius);
+        var meanB = BoxBlur(b, width, height, radius);
+
+        for (var i = 0; i < alpha.Length; i++)
+        {
+            alpha[i] = Math.Clamp(meanA[i] * guide[i] + meanB[i], 0f, 1f);
+        }
+    }
+
+    /// <summary>Mean over a square window, as two separable passes over running sums.</summary>
+    private static float[] BoxBlur(float[] source, int width, int height, int radius)
+    {
+        var horizontal = new float[source.Length];
+        var result = new float[source.Length];
+
+        for (var y = 0; y < height; y++)
+        {
+            var row = y * width;
+            float running = 0;
+
+            for (var x = 0; x <= Math.Min(radius, width - 1); x++) running += source[row + x];
+
+            for (var x = 0; x < width; x++)
+            {
+                var left = x - radius - 1;
+                var right = x + radius;
+
+                if (x > 0)
+                {
+                    if (right < width) running += source[row + right];
+                    if (left >= 0) running -= source[row + left];
+                }
+
+                var from = Math.Max(0, x - radius);
+                var to = Math.Min(width - 1, x + radius);
+                horizontal[row + x] = running / (to - from + 1);
+            }
+        }
+
+        for (var x = 0; x < width; x++)
+        {
+            float running = 0;
+
+            for (var y = 0; y <= Math.Min(radius, height - 1); y++) running += horizontal[y * width + x];
+
+            for (var y = 0; y < height; y++)
+            {
+                var above = y - radius - 1;
+                var below = y + radius;
+
+                if (y > 0)
+                {
+                    if (below < height) running += horizontal[below * width + x];
+                    if (above >= 0) running -= horizontal[above * width + x];
+                }
+
+                var from = Math.Max(0, y - radius);
+                var to = Math.Min(height - 1, y + radius);
+                result[y * width + x] = running / (to - from + 1);
+            }
+        }
+
+        return result;
     }
 
     /// <summary>Bilinear read of the membership map at a fractional cell position.</summary>

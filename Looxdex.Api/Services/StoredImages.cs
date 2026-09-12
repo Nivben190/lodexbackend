@@ -17,11 +17,14 @@ public static class StoredImages
     public const int MaxBytes = 4 * 1024 * 1024;
 
     /// <summary>
-    /// Longest edge a stored photo needs. The detector works at 640 and the feed
-    /// never shows a look wider than a phone, so anything past this is bytes in
-    /// the database and nothing on the screen.
+    /// Longest edge a stored photo needs.
+    ///
+    /// The feed never shows a look wider than a phone, but the cutouts are taken
+    /// from a fraction of the frame — a pair of trousers is a quarter of it — and
+    /// that fraction has to survive being shown at tile size. Cutting the photo to
+    /// 1600 was cutting the tiles to a blur.
     /// </summary>
-    public const int MaxEdge = 1600;
+    public const int MaxEdge = 2400;
 
     /// <summary>
     /// Shrinks an oversized photo, returning the bytes to store and their type.
@@ -47,7 +50,7 @@ public static class StoredImages
                 KnownResamplers.Lanczos3));
 
             using var buffer = new MemoryStream();
-            image.Save(buffer, new JpegEncoder { Quality = 86 });
+            image.Save(buffer, new JpegEncoder { Quality = 90 });
 
             return (buffer.ToArray(), "image/jpeg");
         }
