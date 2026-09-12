@@ -1,3 +1,7 @@
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Jpeg;
+using SixLabors.ImageSharp.Processing;
+
 namespace Looxdex.Api.Services;
 
 /// <summary>
@@ -11,6 +15,47 @@ public static class StoredImages
     /// anything near this is either an unusual camera or a bad actor.
     /// </summary>
     public const int MaxBytes = 4 * 1024 * 1024;
+
+    /// <summary>
+    /// Longest edge a stored photo needs. The detector works at 640 and the feed
+    /// never shows a look wider than a phone, so anything past this is bytes in
+    /// the database and nothing on the screen.
+    /// </summary>
+    public const int MaxEdge = 1600;
+
+    /// <summary>
+    /// Shrinks an oversized photo, returning the bytes to store and their type.
+    ///
+    /// Returns the original untouched when it is already small enough or cannot be
+    /// decoded: a photo that will not open here is the detector's problem to report,
+    /// not something to reject at the door.
+    /// </summary>
+    public static (byte[] Bytes, string ContentType) Downscale(byte[] bytes, string contentType)
+    {
+        try
+        {
+            using var image = Image.Load(bytes);
+
+            var longest = Math.Max(image.Width, image.Height);
+            if (longest <= MaxEdge) return (bytes, contentType);
+
+            var scale = MaxEdge / (double)longest;
+
+            image.Mutate(c => c.Resize(
+                (int)Math.Round(image.Width * scale),
+                (int)Math.Round(image.Height * scale),
+                KnownResamplers.Lanczos3));
+
+            using var buffer = new MemoryStream();
+            image.Save(buffer, new JpegEncoder { Quality = 86 });
+
+            return (buffer.ToArray(), "image/jpeg");
+        }
+        catch (Exception)
+        {
+            return (bytes, contentType);
+        }
+    }
 
     /// <summary>Identifies a format from its magic bytes, or null if unrecognised.</summary>
     public static string? SniffContentType(ReadOnlySpan<byte> bytes)

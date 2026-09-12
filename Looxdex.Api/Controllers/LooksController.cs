@@ -72,6 +72,11 @@ public class LooksController : ControllerBase
             return BadRequest(new { error = "הקובץ אינו תמונה תקינה." });
         }
 
+        // The app's own uploader downscales before sending; an import has no such
+        // manners — these arrive straight off a camera roll at 3000px and upward,
+        // which is megabytes per row and a slow feed for no visible gain.
+        (bytes, contentType) = StoredImages.Downscale(bytes, contentType);
+
         var embed = string.IsNullOrWhiteSpace(sourceUrl)
             ? null
             : await _instagram.ResolveAsync(sourceUrl, ct);
@@ -88,7 +93,12 @@ public class LooksController : ControllerBase
         }
 
         var source = embed is null ? FeedSource.UserUpload : FeedSource.Instagram;
-        var externalId = embed?.Shortcode ?? Guid.NewGuid().ToString("N")[..16];
+
+        // Keyed on the image, not on the post. A carousel is one post holding ten
+        // different outfits, and each of those is a look in its own right — but the
+        // same photo sent twice is still the same look.
+        var fingerprint = Fingerprint(bytes);
+        var externalId = embed is null ? fingerprint : $"{embed.Shortcode}-{fingerprint}";
 
         var duplicate = await _db.FeedPosts
             .FirstOrDefaultAsync(p => p.Source == source && p.ExternalId == externalId, ct);
@@ -147,6 +157,13 @@ public class LooksController : ControllerBase
 
         var dto = await _feed.GetByIdAsync(post.Id, ct);
         return dto is null ? StatusCode(500) : Ok(dto);
+    }
+
+    /// <summary>Short, stable id for an image's contents.</summary>
+    private static string Fingerprint(byte[] bytes)
+    {
+        var hash = System.Security.Cryptography.SHA256.HashData(bytes);
+        return Convert.ToHexString(hash)[..12].ToLowerInvariant();
     }
 
     /// <summary>
