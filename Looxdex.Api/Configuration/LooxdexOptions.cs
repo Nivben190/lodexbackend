@@ -7,7 +7,17 @@ public class PexelsOptions
     /// <summary>Pexels API key. Supply via the PEXELS__APIKEY environment variable in production.</summary>
     public string ApiKey { get; set; } = string.Empty;
 
-    public bool Enabled => !string.IsNullOrWhiteSpace(ApiKey);
+    /// <summary>
+    /// Whether to keep pulling stock photography into the feed.
+    ///
+    /// Off: the feed is the wearer's own looks now, and a background job that
+    /// quietly refills it with stock every six hours would undo that on its own.
+    /// Deleting the key is not enough — it lives in the deployment's environment,
+    /// not in the repository — so the switch has to be here.
+    /// </summary>
+    public bool Ingest { get; set; }
+
+    public bool Enabled => Ingest && !string.IsNullOrWhiteSpace(ApiKey);
 
     /// <summary>Queries rotated through by the ingest job to keep the feed varied.</summary>
     public List<string> Queries { get; set; } = new()
@@ -68,11 +78,21 @@ public class OnnxDetectionOptions
     /// <summary>
     /// Drop detections below this confidence.
     ///
-    /// Tuned up from 0.45: genuine detections land at 0.7–1.0, while the 0.45–0.6
-    /// band is mostly false positives — bare feet read as "shoe", skin as "top".
-    /// A missing item is far less damaging here than a confidently wrong one.
+    /// Back down to 0.45 now that the segmenter vets every hit. The 0.45–0.6 band
+    /// is where the false positives live — bare feet read as "shoe", skin as "top"
+    /// — but it is also where real watches, belts and half-turned shirts live, and
+    /// those used to be thrown away with the rest. A detection in that band is now
+    /// kept only if a second model finds the garment where the box says it is.
     /// </summary>
-    public double MinScore { get; set; } = 0.65;
+    public double MinScore { get; set; } = 0.45;
+
+    /// <summary>
+    /// Confidence at which a detection is believed even when the segmenter cannot
+    /// find the garment. Segmentation has its own failures — an unusual cut, a
+    /// garment against its own colour — and they should not erase a detection the
+    /// detector is this sure about.
+    /// </summary>
+    public double UnconfirmedScore { get; set; } = 0.80;
 
     /// <summary>Keep at most this many items per image, highest score first.</summary>
     public int MaxItemsPerImage { get; set; } = 6;

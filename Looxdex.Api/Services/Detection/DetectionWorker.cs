@@ -19,6 +19,13 @@ public class DetectionWorker : BackgroundService
     private readonly OnnxDetectionOptions _options;
     private readonly ILogger<DetectionWorker> _logger;
 
+    /// <summary>
+    /// One sweep at a time. The timer and the admin endpoint both call in, and two
+    /// sweeps overlapping each pick up the same pending post and each write a full
+    /// set of items — which is how a look ends up listing its trousers four times.
+    /// </summary>
+    private readonly SemaphoreSlim _sweepGate = new(1, 1);
+
     public DetectionWorker(
         IServiceScopeFactory scopeFactory,
         IOptions<OnnxDetectionOptions> options,
@@ -72,6 +79,19 @@ public class DetectionWorker : BackgroundService
     /// <summary>Processes one batch. Returns how many posts were attempted.</summary>
     public async Task<int> RunSweepAsync(CancellationToken ct)
     {
+        await _sweepGate.WaitAsync(ct);
+        try
+        {
+            return await SweepAsync(ct);
+        }
+        finally
+        {
+            _sweepGate.Release();
+        }
+    }
+
+    private async Task<int> SweepAsync(CancellationToken ct)
+    {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LooxdexDbContext>();
         var detector = scope.ServiceProvider.GetRequiredService<IFashionDetector>();
@@ -81,6 +101,7 @@ public class DetectionWorker : BackgroundService
         if (!detector.Enabled) return 0;
 
         var pending = await db.FeedPosts
+            .Include(p => p.DetectedItems)
             .Where(p => p.DetectionState == DetectionState.Pending
                         && p.DetectionAttempts < _options.MaxAttempts)
             .OrderByDescending(p => p.Rank)
@@ -118,6 +139,13 @@ public class DetectionWorker : BackgroundService
                 }
                 else
                 {
+                    // Analysing a post again replaces what it had. Appending would
+                    // leave a retried post listing everything twice.
+                    if (post.DetectedItems.Count > 0)
+                    {
+                        db.DetectedItems.RemoveRange(post.DetectedItems);
+                    }
+
                     // Cut each garment out of the same photo while it is in hand, so
                     // the feed can show product tiles instead of slices of the scene.
                     var rendered = await cutouts.RenderAsync(photo, hits, ct);
@@ -125,6 +153,22 @@ public class DetectionWorker : BackgroundService
                     for (var i = 0; i < hits.Count; i++)
                     {
                         var h = hits[i];
+                        rendered.TryGetValue(i, out var render);
+
+                        // Two models have to agree before a middling detection is
+                        // believed. Where the segmenter knows the garment and finds
+                        // none of it under the box, the detector is seeing things —
+                        // bare legs read as trousers, a floorboard as a shoe — and
+                        // only a confident detection survives that disagreement.
+                        if (render is { Verdict: MaskVerdict.Absent }
+                            && h.Score < _options.UnconfirmedScore)
+                        {
+                            _logger.LogInformation(
+                                "Dropped {Label} at {Score:P0} on post {PostId}: no mask under the box.",
+                                h.Label, h.Score, post.Id);
+                            continue;
+                        }
+
                         var item = new DetectedItemEntity
                         {
                             FeedPostId = post.Id,
@@ -140,7 +184,7 @@ public class DetectionWorker : BackgroundService
 
                         item.CutoutAttemptedAt = DateTime.UtcNow;
 
-                        if (rendered.TryGetValue(i, out var cutout))
+                        if (render?.Cutout is { } cutout)
                         {
                             item.CutoutImageId = StoreCutout(db, cutout);
                             item.ColorName = cutout.Color.Name;
@@ -229,7 +273,7 @@ public class DetectionWorker : BackgroundService
             {
                 items[i].CutoutAttemptedAt = DateTime.UtcNow;
 
-                if (!results.TryGetValue(i, out var cutout))
+                if (results.GetValueOrDefault(i)?.Cutout is not { } cutout)
                 {
                     // A re-run that now rejects this mask must also drop what the
                     // old rules produced, or the item keeps showing a tile the

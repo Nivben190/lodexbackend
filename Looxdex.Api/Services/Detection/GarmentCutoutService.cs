@@ -12,15 +12,33 @@ namespace Looxdex.Api.Services.Detection;
 /// <summary>A garment lifted out of a photo, ready to show as a product tile.</summary>
 public record GarmentCutout(byte[] Image, string ContentType, NamedColor Color);
 
+/// <summary>What the segmenter has to say about a detection.</summary>
+public enum MaskVerdict
+{
+    /// <summary>No class for this garment, so the segmenter has no opinion either way.</summary>
+    NotSegmentable,
+
+    /// <summary>Pixels of the right garment sit under the box: a second model agrees.</summary>
+    Confirmed,
+
+    /// <summary>Nothing of the kind is there — bare skin read as a top, a floor as a shoe.</summary>
+    Absent
+}
+
+/// <param name="Verdict">Whether the segmenter found the garment the detector claims.</param>
+/// <param name="Cutout">The tile, when the mask was solid enough to make one worth showing.</param>
+public record GarmentRender(MaskVerdict Verdict, GarmentCutout? Cutout);
+
 public interface IGarmentCutoutService
 {
     bool Enabled { get; }
 
     /// <summary>
-    /// Cuts each detection out of the photo. Keyed by the index of the hit in
-    /// <paramref name="hits"/>; an item with no usable mask is simply absent.
+    /// Segments the photo and reports on each detection: whether the garment is
+    /// really there, and its cutout when one can be made. Keyed by the index of
+    /// the hit in <paramref name="hits"/>.
     /// </summary>
-    Task<IReadOnlyDictionary<int, GarmentCutout>> RenderAsync(
+    Task<IReadOnlyDictionary<int, GarmentRender>> RenderAsync(
         byte[] photo, IReadOnlyList<DetectionHit> hits, CancellationToken ct);
 }
 
@@ -92,10 +110,10 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
 
     public bool Enabled => _options.Enabled;
 
-    public async Task<IReadOnlyDictionary<int, GarmentCutout>> RenderAsync(
+    public async Task<IReadOnlyDictionary<int, GarmentRender>> RenderAsync(
         byte[] photo, IReadOnlyList<DetectionHit> hits, CancellationToken ct)
     {
-        var empty = (IReadOnlyDictionary<int, GarmentCutout>)new Dictionary<int, GarmentCutout>();
+        var empty = (IReadOnlyDictionary<int, GarmentRender>)new Dictionary<int, GarmentRender>();
 
         if (!Enabled || hits.Count == 0) return empty;
 
@@ -108,16 +126,19 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
             using var image = Image.Load<Rgba32>(photo);
             var labels = Segment(session, image);
 
-            var results = new Dictionary<int, GarmentCutout>();
+            var results = new Dictionary<int, GarmentRender>();
 
             for (var i = 0; i < hits.Count; i++)
             {
                 ct.ThrowIfCancellationRequested();
 
-                if (!AtrClasses.TryGetValue(hits[i].Label, out var classes)) continue;
+                if (!AtrClasses.TryGetValue(hits[i].Label, out var classes))
+                {
+                    results[i] = new GarmentRender(MaskVerdict.NotSegmentable, null);
+                    continue;
+                }
 
-                var cutout = Render(image, hits[i], classes, labels);
-                if (cutout is not null) results[i] = cutout;
+                results[i] = Render(image, hits[i], classes, labels);
             }
 
             return results;
@@ -199,7 +220,7 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
     }
 
     /// <summary>Masks one garment out of the photo and lays it on a square tile.</summary>
-    private GarmentCutout? Render(Image<Rgba32> image, DetectionHit hit, int[] classes, byte[,] labels)
+    private GarmentRender Render(Image<Rgba32> image, DetectionHit hit, int[] classes, byte[,] labels)
     {
         var mapHeight = labels.GetLength(0);
         var mapWidth = labels.GetLength(1);
@@ -222,7 +243,10 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
             Math.Max(1, (int)Math.Round(hit.Height / 100 * mapHeight)));
 
         var extent = KeepBlobsUnder(membership, mapHeight, mapWidth, box);
-        if (extent is null) return null;
+
+        // Nothing of this garment under the box. Said plainly rather than silently,
+        // because it is the strongest evidence we have that the detection is wrong.
+        if (extent is null) return new GarmentRender(MaskVerdict.Absent, null);
 
         // A margin of one cell: the blob edge is the mask's idea of the hem, and
         // the soft ramp below needs somewhere to fall off.
@@ -234,7 +258,10 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
                 (int)((extent.Value.Height + 2) / (double)mapHeight * image.Height)),
             image.Bounds);
 
-        if (region.Width < 8 || region.Height < 8) return null;
+        if (region.Width < 8 || region.Height < 8)
+        {
+            return new GarmentRender(MaskVerdict.Confirmed, null);
+        }
 
         using var crop = image.Clone(c => c.Crop(region));
 
@@ -288,7 +315,11 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
             _logger.LogInformation(
                 "No usable mask for {Label}: {Pixels} solid px against a floor of {Floor}; "
                 + "keeping the crop.", hit.Label, opaque, _options.MinMaskPixels);
-            return null;
+
+            // The garment is there, it is just too thin to make a tile of — a belt,
+            // a strap. Confirmed, so the detection stands; no cutout, so it keeps
+            // the plain crop.
+            return new GarmentRender(MaskVerdict.Confirmed, null);
         }
 
         using var trimmed = crop.Clone(c => c.Crop(
@@ -318,10 +349,12 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
 
         var dominant = DominantColor(lumaR, lumaG, lumaB, lumaCount, opaque);
 
-        return new GarmentCutout(
-            buffer.ToArray(),
-            "image/webp",
-            ColorNamer.Describe(dominant.R, dominant.G, dominant.B));
+        return new GarmentRender(
+            MaskVerdict.Confirmed,
+            new GarmentCutout(
+                buffer.ToArray(),
+                "image/webp",
+                ColorNamer.Describe(dominant.R, dominant.G, dominant.B)));
     }
 
     /// <summary>
