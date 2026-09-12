@@ -109,19 +109,23 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
     }
 
     /// <summary>
-    /// Resize to the model's fixed input size and normalise into an NCHW tensor.
-    /// The aspect ratio is deliberately not preserved: boxes come back normalised
-    /// to the same space, so the distortion cancels out when we convert to percentages.
+    /// Resize preserving aspect ratio and normalise into an NCHW tensor.
+    ///
+    /// The model's input is fully dynamic, and YOLOS was trained the DETR way:
+    /// scale the shortest edge to a target, cap the longest, keep the aspect.
+    /// Stretching a portrait photo into a landscape frame distorts every body
+    /// proportion and makes the detector hallucinate — hair reads as a hat, a
+    /// chair back as a bag. Boxes come back normalised to this same frame, so
+    /// keeping the aspect also keeps the mapping to percentages exact.
     /// </summary>
     private DenseTensor<float> BuildInputTensor(Image<Rgb24> image)
     {
-        var height = _options.InputHeight;
-        var width = _options.InputWidth;
+        var (width, height) = TargetSize(image.Width, image.Height);
 
         using var resized = image.Clone(c => c.Resize(new ResizeOptions
         {
             Size = new Size(width, height),
-            Mode = ResizeMode.Stretch,
+            Mode = ResizeMode.Stretch,   // exact size; the size itself keeps the ratio
             Sampler = KnownResamplers.Bicubic
         }));
 
@@ -143,6 +147,34 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
         });
 
         return tensor;
+    }
+
+    /// <summary>
+    /// DETR-style sizing: scale the shortest edge up to <c>ShortestEdge</c> without
+    /// letting the longest exceed <c>LongestEdge</c>, then round to the patch grid.
+    /// </summary>
+    private (int Width, int Height) TargetSize(int sourceWidth, int sourceHeight)
+    {
+        double shortest = _options.ShortestEdge;
+        double longest = _options.LongestEdge;
+
+        var minSide = Math.Min(sourceWidth, sourceHeight);
+        var maxSide = Math.Max(sourceWidth, sourceHeight);
+
+        var scale = Math.Min(shortest / minSide, longest / maxSide);
+
+        var width = RoundToPatch(sourceWidth * scale);
+        var height = RoundToPatch(sourceHeight * scale);
+
+        return (width, height);
+    }
+
+    /// <summary>YOLOS splits the image into 16px patches, so both sides must divide by 16.</summary>
+    private static int RoundToPatch(double value)
+    {
+        const int patch = 16;
+        var rounded = (int)Math.Round(value / patch) * patch;
+        return Math.Max(patch * 2, rounded);
     }
 
     /// <summary>

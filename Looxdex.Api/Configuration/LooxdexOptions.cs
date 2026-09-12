@@ -55,9 +55,15 @@ public class OnnxDetectionOptions
     public string CacheDirectory { get; set; } = ".model-cache";
     public string FileName { get; set; } = "yolos-fashionpedia-quantized.onnx";
 
-    /// <summary>Model input size, height then width, from the model's config.json.</summary>
-    public int InputHeight { get; set; } = 512;
-    public int InputWidth { get; set; } = 864;
+    /// <summary>
+    /// Preprocessing target, DETR-style: the shortest edge is scaled to this
+    /// unless that would push the longest past <see cref="LongestEdge"/>.
+    /// The model's input is dynamic, so the aspect ratio is preserved rather
+    /// than stretching every photo into one fixed frame.
+    /// </summary>
+    public int ShortestEdge { get; set; } = 640;
+
+    public int LongestEdge { get; set; } = 1024;
 
     /// <summary>
     /// Drop detections below this confidence.
