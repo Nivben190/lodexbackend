@@ -59,8 +59,14 @@ public class OnnxDetectionOptions
     public int InputHeight { get; set; } = 512;
     public int InputWidth { get; set; } = 864;
 
-    /// <summary>Drop detections below this confidence.</summary>
-    public double MinScore { get; set; } = 0.45;
+    /// <summary>
+    /// Drop detections below this confidence.
+    ///
+    /// Tuned up from 0.45: genuine detections land at 0.7–1.0, while the 0.45–0.6
+    /// band is mostly false positives — bare feet read as "shoe", skin as "top".
+    /// A missing item is far less damaging here than a confidently wrong one.
+    /// </summary>
+    public double MinScore { get; set; } = 0.65;
 
     /// <summary>Keep at most this many items per image, highest score first.</summary>
     public int MaxItemsPerImage { get; set; } = 6;

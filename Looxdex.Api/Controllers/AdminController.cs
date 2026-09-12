@@ -1,9 +1,11 @@
+using Looxdex.Api.Configuration;
 using Looxdex.Api.Data;
 using Looxdex.Api.Entities;
 using Looxdex.Api.Services.Detection;
 using Looxdex.Api.Services.Ingest;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Looxdex.Api.Controllers;
 
@@ -20,15 +22,18 @@ public class AdminController : ControllerBase
     private readonly FeedIngestService _ingest;
     private readonly DetectionWorker _detection;
     private readonly LooxdexDbContext _db;
+    private readonly OnnxDetectionOptions _detectionOptions;
 
     public AdminController(
         FeedIngestService ingest,
         IEnumerable<IHostedService> hostedServices,
-        LooxdexDbContext db)
+        LooxdexDbContext db,
+        IOptions<OnnxDetectionOptions> detectionOptions)
     {
         _ingest = ingest;
         _detection = hostedServices.OfType<DetectionWorker>().First();
         _db = db;
+        _detectionOptions = detectionOptions.Value;
     }
 
     /// <summary>Pulls a page of photos from the image provider into the library.</summary>
@@ -67,6 +72,31 @@ public class AdminController : ControllerBase
                 ct);
 
         return Ok(new { reset });
+    }
+
+    /// <summary>
+    /// Deletes stored detections that fall below the current confidence floor.
+    /// Run after raising MinScore so already-analysed posts are cleaned up too,
+    /// rather than only new ones benefiting from the stricter threshold.
+    /// </summary>
+    [HttpPost("prune-detections")]
+    public async Task<ActionResult> PruneDetections(
+        [FromQuery] double? minScore, CancellationToken ct = default)
+    {
+        var floor = minScore ?? _detectionOptions.MinScore;
+
+        var removed = await _db.DetectedItems
+            .Where(d => d.Score < floor)
+            .ExecuteDeleteAsync(ct);
+
+        // A post left with nothing is worth another pass under the new rules.
+        var emptied = await _db.FeedPosts
+            .Where(p => p.DetectionState == DetectionState.Completed && !p.DetectedItems.Any())
+            .ExecuteUpdateAsync(
+                s => s.SetProperty(p => p.DetectionState, DetectionState.Skipped),
+                ct);
+
+        return Ok(new { floor, removed, postsNowEmpty = emptied });
     }
 
     /// <summary>Pipeline counters, handy while the library is filling up.</summary>
