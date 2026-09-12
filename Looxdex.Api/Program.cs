@@ -39,6 +39,8 @@ builder.Services.Configure<OnnxDetectionOptions>(
     builder.Configuration.GetSection(OnnxDetectionOptions.SectionName));
 builder.Services.Configure<GarmentCutoutOptions>(
     builder.Configuration.GetSection(GarmentCutoutOptions.SectionName));
+builder.Services.Configure<DemoContentOptions>(
+    builder.Configuration.GetSection(DemoContentOptions.SectionName));
 
 // ---- persistence ---------------------------------------------------------
 // Postgres (Supabase). The connection string comes from configuration:

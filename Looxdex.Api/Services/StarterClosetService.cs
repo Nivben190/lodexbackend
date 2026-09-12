@@ -1,6 +1,8 @@
+using Looxdex.Api.Configuration;
 using Looxdex.Api.Data;
 using Looxdex.Api.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Looxdex.Api.Services;
 
@@ -14,11 +16,16 @@ namespace Looxdex.Api.Services;
 public class StarterClosetService
 {
     private readonly LooxdexDbContext _db;
+    private readonly DemoContentOptions _demo;
     private readonly ILogger<StarterClosetService> _logger;
 
-    public StarterClosetService(LooxdexDbContext db, ILogger<StarterClosetService> logger)
+    public StarterClosetService(
+        LooxdexDbContext db,
+        IOptions<DemoContentOptions> demo,
+        ILogger<StarterClosetService> logger)
     {
         _db = db;
+        _demo = demo.Value;
         _logger = logger;
     }
 
@@ -43,6 +50,17 @@ public class StarterClosetService
     public async Task EnsureSeededAsync(string ownerKey, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(ownerKey)) return;
+
+        // Still record the owner, so turning demo content back on later does not
+        // hand a starter closet to someone who has been using the app for months.
+        if (!_demo.Enabled)
+        {
+            var seen = await _db.OwnerProfiles
+                .FirstOrDefaultAsync(p => p.OwnerKey == ownerKey, ct);
+
+            if (seen?.SeededAt is null) await RecordSeededAsync(seen, ownerKey, ct);
+            return;
+        }
 
         var profile = await _db.OwnerProfiles
             .FirstOrDefaultAsync(p => p.OwnerKey == ownerKey, ct);

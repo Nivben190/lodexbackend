@@ -149,6 +149,20 @@ public class GarmentCutoutOptions
     public int BackfillBatchSize { get; set; } = 8;
 }
 
+/// <summary>
+/// The hand-authored demo content: a starter closet, demo suitcases.
+///
+/// Off. It existed so the app had something to show before anyone had added
+/// anything, and it now sits alongside the wearer's real looks looking like
+/// stock photography, because that is what it is.
+/// </summary>
+public class DemoContentOptions
+{
+    public const string SectionName = "DemoContent";
+
+    public bool Enabled { get; set; }
+}
+
 public class HuggingFaceOptions
 {
     public const string SectionName = "HuggingFace";

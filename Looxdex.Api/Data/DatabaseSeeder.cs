@@ -1,6 +1,8 @@
+using Looxdex.Api.Configuration;
 using Looxdex.Api.Entities;
 using Looxdex.Api.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace Looxdex.Api.Data;
 
@@ -15,20 +17,29 @@ public class DatabaseSeeder
 {
     private readonly LooxdexDbContext _db;
     private readonly LooxdexSeedData _seed;
+    private readonly DemoContentOptions _demo;
     private readonly ILogger<DatabaseSeeder> _logger;
 
     public DatabaseSeeder(
         LooxdexDbContext db,
         LooxdexSeedData seed,
+        IOptions<DemoContentOptions> demo,
         ILogger<DatabaseSeeder> logger)
     {
         _db = db;
         _seed = seed;
+        _demo = demo.Value;
         _logger = logger;
     }
 
     public async Task SeedAsync(CancellationToken ct)
     {
+        if (!_demo.Enabled)
+        {
+            _logger.LogInformation("Demo content disabled; nothing seeded.");
+            return;
+        }
+
         var owner = HeaderOwnerContext.DemoOwnerKey;
 
         if (!await _db.ClosetItems.AnyAsync(ct))
