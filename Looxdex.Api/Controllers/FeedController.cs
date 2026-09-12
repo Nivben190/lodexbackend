@@ -1,5 +1,5 @@
-using Looxdex.Api.Data;
 using Looxdex.Api.Models;
+using Looxdex.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Looxdex.Api.Controllers;
@@ -8,33 +8,40 @@ namespace Looxdex.Api.Controllers;
 [Route("api/[controller]")]
 public class FeedController : ControllerBase
 {
-    private readonly LooxdexSeedData _data;
+    private readonly FeedReadService _feed;
 
-    public FeedController(LooxdexSeedData data)
+    public FeedController(FeedReadService feed)
     {
-        _data = data;
+        _feed = feed;
     }
 
+    /// <summary>
+    /// One page of the feed. Pass the previous response's <c>nextCursor</c> to page
+    /// forward; a null cursor in the response means the end of the library.
+    /// </summary>
     [HttpGet]
-    public ActionResult<IEnumerable<FeedPost>> GetFeed()
+    public async Task<ActionResult<FeedPage>> GetFeed(
+        [FromQuery] string? cursor,
+        [FromQuery] int? limit,
+        [FromQuery(Name = "q")] string? search,
+        [FromQuery] bool saved = false,
+        CancellationToken ct = default)
     {
-        return Ok(_data.FeedPosts);
+        var page = await _feed.GetPageAsync(cursor, limit, search, saved, ct);
+        return Ok(page);
     }
 
     [HttpGet("{id:int}")]
-    public ActionResult<FeedPost> GetById(int id)
+    public async Task<ActionResult<FeedPost>> GetById(int id, CancellationToken ct)
     {
-        var post = _data.FeedPosts.FirstOrDefault(p => p.Id == id);
+        var post = await _feed.GetByIdAsync(id, ct);
         return post is null ? NotFound() : Ok(post);
     }
 
     [HttpPatch("{id:int}/save")]
-    public ActionResult<FeedPost> ToggleSave(int id)
+    public async Task<ActionResult<FeedPost>> ToggleSave(int id, CancellationToken ct)
     {
-        var post = _data.FeedPosts.FirstOrDefault(p => p.Id == id);
-        if (post is null) return NotFound();
-
-        post.IsSaved = !post.IsSaved;
-        return Ok(post);
+        var post = await _feed.ToggleSaveAsync(id, ct);
+        return post is null ? NotFound() : Ok(post);
     }
 }

@@ -1,6 +1,9 @@
 using Looxdex.Api.Data;
+using Looxdex.Api.Entities;
 using Looxdex.Api.Models;
+using Looxdex.Api.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace Looxdex.Api.Controllers;
 
@@ -8,50 +11,69 @@ namespace Looxdex.Api.Controllers;
 [Route("api/[controller]")]
 public class ClosetController : ControllerBase
 {
-    private readonly LooxdexSeedData _data;
+    private const string FallbackImage =
+        "https://images.unsplash.com/photo-1445205170230-053b83016050?w=400&q=80";
 
-    public ClosetController(LooxdexSeedData data)
+    private readonly LooxdexDbContext _db;
+    private readonly IOwnerContext _owner;
+
+    public ClosetController(LooxdexDbContext db, IOwnerContext owner)
     {
-        _data = data;
+        _db = db;
+        _owner = owner;
     }
 
     [HttpGet]
-    public ActionResult<IEnumerable<ClosetItem>> GetCloset(
+    public async Task<ActionResult<IEnumerable<ClosetItem>>> GetCloset(
         [FromQuery] string? category,
         [FromQuery] string? color,
-        [FromQuery] string? season)
+        [FromQuery] string? season,
+        CancellationToken ct = default)
     {
-        var items = _data.ClosetItems.AsEnumerable();
+        var query = _db.ClosetItems
+            .AsNoTracking()
+            .Where(i => i.OwnerKey == _owner.OwnerKey);
 
         if (!string.IsNullOrWhiteSpace(category) && category != "הכל")
-            items = items.Where(i => i.Category == category);
+            query = query.Where(i => i.Category == category);
 
         if (!string.IsNullOrWhiteSpace(color))
-            items = items.Where(i => i.Color == color);
+            query = query.Where(i => i.Color == color);
 
         if (!string.IsNullOrWhiteSpace(season))
-            items = items.Where(i => i.Season == season);
+            query = query.Where(i => i.Season == season);
 
-        return Ok(items.OrderByDescending(i => i.AddedAt));
+        var items = await query
+            .OrderByDescending(i => i.AddedAt)
+            .ToListAsync(ct);
+
+        return Ok(items.Select(ToDto));
     }
 
     [HttpGet("{id:int}")]
-    public ActionResult<ClosetItem> GetById(int id)
+    public async Task<ActionResult<ClosetItem>> GetById(int id, CancellationToken ct)
     {
-        var item = _data.ClosetItems.FirstOrDefault(i => i.Id == id);
-        return item is null ? NotFound() : Ok(item);
+        var item = await _db.ClosetItems
+            .AsNoTracking()
+            .FirstOrDefaultAsync(i => i.Id == id && i.OwnerKey == _owner.OwnerKey, ct);
+
+        return item is null ? NotFound() : Ok(ToDto(item));
     }
 
     [HttpPost]
-    public ActionResult<ClosetItem> AddItem([FromBody] CreateClosetItemRequest request)
+    public async Task<ActionResult<ClosetItem>> AddItem(
+        [FromBody] CreateClosetItemRequest request, CancellationToken ct)
     {
-        var item = new ClosetItem
+        if (string.IsNullOrWhiteSpace(request.Name))
         {
-            Id = _data.GetNextClosetId(),
-            Name = request.Name,
-            ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl)
-                ? "https://images.unsplash.com/photo-1445205170230-053b83016050?w=400&q=80"
-                : request.ImageUrl,
+            return BadRequest(new { error = "שם הפריט הוא שדה חובה." });
+        }
+
+        var entity = new ClosetItemEntity
+        {
+            OwnerKey = _owner.OwnerKey,
+            Name = request.Name.Trim(),
+            ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? FallbackImage : request.ImageUrl,
             Category = request.Category,
             Color = request.Color,
             ColorHex = request.ColorHex,
@@ -61,16 +83,37 @@ public class ClosetController : ControllerBase
             AddedAt = DateTime.UtcNow
         };
 
-        _data.ClosetItems.Insert(0, item);
-        return CreatedAtAction(nameof(GetById), new { id = item.Id }, item);
+        _db.ClosetItems.Add(entity);
+        await _db.SaveChangesAsync(ct);
+
+        return CreatedAtAction(nameof(GetById), new { id = entity.Id }, ToDto(entity));
     }
 
     [HttpDelete("{id:int}")]
-    public IActionResult DeleteItem(int id)
+    public async Task<IActionResult> DeleteItem(int id, CancellationToken ct)
     {
-        var item = _data.ClosetItems.FirstOrDefault(i => i.Id == id);
+        var item = await _db.ClosetItems
+            .FirstOrDefaultAsync(i => i.Id == id && i.OwnerKey == _owner.OwnerKey, ct);
+
         if (item is null) return NotFound();
-        _data.ClosetItems.Remove(item);
+
+        _db.ClosetItems.Remove(item);
+        await _db.SaveChangesAsync(ct);
         return NoContent();
     }
+
+    private static ClosetItem ToDto(ClosetItemEntity e) => new()
+    {
+        Id = e.Id,
+        Name = e.Name,
+        ImageUrl = e.ImageUrl,
+        Category = e.Category,
+        Color = e.Color,
+        ColorHex = e.ColorHex,
+        Season = e.Season,
+        Brand = e.Brand,
+        Formality = e.Formality,
+        IsFavorite = e.IsFavorite,
+        AddedAt = e.AddedAt
+    };
 }

@@ -2,3 +2,12 @@ bin/
 obj/
 .vs/
 *.user
+
+# Local SQLite database — recreated from migrations on boot
+*.db
+*.db-shm
+*.db-wal
+
+# ONNX weights, downloaded at runtime (~57MB)
+.model-cache/
+*.onnx
