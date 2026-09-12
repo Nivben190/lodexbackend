@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: looxdex-api
+    runtime: docker
+    dockerfilePath: ./Looxdex.Api/Dockerfile
+    dockerContext: ./Looxdex.Api
+    plan: free
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: ""
