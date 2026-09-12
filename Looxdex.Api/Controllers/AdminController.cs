@@ -3,6 +3,7 @@ using Looxdex.Api.Data;
 using Looxdex.Api.Entities;
 using Looxdex.Api.Services.Detection;
 using Looxdex.Api.Services.Ingest;
+using Looxdex.Api.Services.Matching;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -22,18 +23,61 @@ public class AdminController : ControllerBase
     private readonly FeedIngestService _ingest;
     private readonly DetectionWorker _detection;
     private readonly LooxdexDbContext _db;
+    private readonly ProductCatalogue _catalogue;
+    private readonly ProductMatcher _matcher;
     private readonly OnnxDetectionOptions _detectionOptions;
 
     public AdminController(
         FeedIngestService ingest,
         IEnumerable<IHostedService> hostedServices,
         LooxdexDbContext db,
+        ProductCatalogue catalogue,
+        ProductMatcher matcher,
         IOptions<OnnxDetectionOptions> detectionOptions)
     {
         _ingest = ingest;
         _detection = hostedServices.OfType<DetectionWorker>().First();
         _db = db;
+        _catalogue = catalogue;
+        _matcher = matcher;
         _detectionOptions = detectionOptions.Value;
+    }
+
+    /// <summary>
+    /// Adds one garment to the shoppable catalogue: fetches its photograph, learns
+    /// what it looks like, and files it. Whatever the source — a dataset now, an
+    /// affiliate feed later — this is the door it comes in through.
+    /// </summary>
+    [HttpPost("products")]
+    public async Task<ActionResult> AddProduct(
+        [FromBody] ProductImport product, CancellationToken ct)
+    {
+        var added = await _catalogue.AddAsync(product, ct);
+        return added ? Ok(new { added = true }) : BadRequest(new { added = false });
+    }
+
+    /// <summary>Matches detected garments against the catalogue, a batch at a time.</summary>
+    [HttpPost("match")]
+    public async Task<ActionResult> Match(
+        [FromQuery] int batchSize = 25,
+        [FromQuery] bool force = false,
+        CancellationToken ct = default)
+    {
+        var (examined, matched) = await _matcher.RunAsync(batchSize, force, ct);
+        return Ok(new { examined, matched });
+    }
+
+    /// <summary>How full the catalogue is, by category.</summary>
+    [HttpGet("catalogue")]
+    public async Task<ActionResult> Catalogue(CancellationToken ct)
+    {
+        var byType = await _db.Products
+            .GroupBy(p => p.ArticleType)
+            .Select(g => new { type = g.Key, count = g.Count() })
+            .OrderByDescending(g => g.count)
+            .ToListAsync(ct);
+
+        return Ok(new { total = byType.Sum(t => t.count), byType });
     }
 
     /// <summary>Pulls a page of photos from the image provider into the library.</summary>

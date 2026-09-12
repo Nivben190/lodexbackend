@@ -3,6 +3,7 @@ using Looxdex.Api.Data;
 using Looxdex.Api.Services;
 using Looxdex.Api.Services.Detection;
 using Looxdex.Api.Services.Ingest;
+using Looxdex.Api.Services.Matching;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -41,6 +42,8 @@ builder.Services.Configure<GarmentCutoutOptions>(
     builder.Configuration.GetSection(GarmentCutoutOptions.SectionName));
 builder.Services.Configure<DemoContentOptions>(
     builder.Configuration.GetSection(DemoContentOptions.SectionName));
+builder.Services.Configure<ProductMatchOptions>(
+    builder.Configuration.GetSection(ProductMatchOptions.SectionName));
 
 // ---- persistence ---------------------------------------------------------
 // Postgres (Supabase). The connection string comes from configuration:
@@ -141,6 +144,9 @@ builder.Services.AddSingleton<ImageFetcher>();
 builder.Services.AddSingleton<ModelProvider>();
 builder.Services.AddSingleton<IFashionDetector, OnnxFashionDetector>();
 builder.Services.AddSingleton<IGarmentCutoutService, GarmentCutoutService>();
+builder.Services.AddSingleton<IClipEmbedder, ClipEmbedder>();
+builder.Services.AddScoped<ProductCatalogue>();
+builder.Services.AddScoped<ProductMatcher>();
 
 builder.Services.AddHostedService<IngestWorker>();
 builder.Services.AddHostedService<DetectionWorker>();

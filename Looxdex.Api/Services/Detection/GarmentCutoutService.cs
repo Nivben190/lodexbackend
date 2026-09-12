@@ -27,7 +27,35 @@ public enum MaskVerdict
 
 /// <param name="Verdict">Whether the segmenter found the garment the detector claims.</param>
 /// <param name="Cutout">The tile, when the mask was solid enough to make one worth showing.</param>
-public record GarmentRender(MaskVerdict Verdict, GarmentCutout? Cutout);
+/// <param name="MaskKey">
+/// Which garment class the mask belonged to, and where it sits, in mask cells.
+/// Two detections landing on the same pixels are two names for one garment — a
+/// leopard coat called both a jacket and a buttoned shirt — and this is what lets
+/// the caller notice that.
+/// </param>
+public record GarmentRender(MaskVerdict Verdict, GarmentCutout? Cutout, MaskFootprint? MaskKey = null);
+
+/// <param name="Class">The ATR class the kept blobs belong to.</param>
+public record MaskFootprint(int Class, int X, int Y, int Width, int Height)
+{
+    /// <summary>How much two footprints overlap, as intersection over union.</summary>
+    public double Overlap(MaskFootprint other)
+    {
+        if (Class != other.Class) return 0;
+
+        var left = Math.Max(X, other.X);
+        var top = Math.Max(Y, other.Y);
+        var right = Math.Min(X + Width, other.X + other.Width);
+        var bottom = Math.Min(Y + Height, other.Y + other.Height);
+
+        if (right <= left || bottom <= top) return 0;
+
+        double intersection = (right - left) * (bottom - top);
+        var union = (double)Width * Height + (double)other.Width * other.Height - intersection;
+
+        return union <= 0 ? 0 : intersection / union;
+    }
+}
 
 /// <param name="PersonPresent">
 /// Whether anyone is wearing anything in this photo. The segmenter parses people,
@@ -288,6 +316,9 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         // because it is the strongest evidence we have that the detection is wrong.
         if (extent is null) return new GarmentRender(MaskVerdict.Absent, null);
 
+        var footprint = new MaskFootprint(
+            classes[0], extent.Value.X, extent.Value.Y, extent.Value.Width, extent.Value.Height);
+
         // A margin of one cell: the blob edge is the mask's idea of the hem, and
         // the soft ramp below needs somewhere to fall off.
         var region = Rectangle.Intersect(
@@ -300,7 +331,7 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
 
         if (region.Width < 8 || region.Height < 8)
         {
-            return new GarmentRender(MaskVerdict.Confirmed, null);
+            return new GarmentRender(MaskVerdict.Confirmed, null, footprint);
         }
 
         using var crop = image.Clone(c => c.Crop(region));
@@ -400,7 +431,7 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
                 "{Label} is only {Width}x{Height} in the photo; keeping the crop.",
                 hit.Label, trimmed.Width, trimmed.Height);
 
-            return new GarmentRender(MaskVerdict.Confirmed, null);
+            return new GarmentRender(MaskVerdict.Confirmed, null, footprint);
         }
 
         // How much of its own bounding box the garment actually fills. A dress fills
@@ -415,7 +446,7 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
                 "{Label} fills only {Fill:P0} of its outline; too broken to read, keeping the crop.",
                 hit.Label, fill);
 
-            return new GarmentRender(MaskVerdict.Confirmed, null);
+            return new GarmentRender(MaskVerdict.Confirmed, null, footprint);
         }
 
         var tileSize = _options.TileSize;
@@ -456,7 +487,8 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
             new GarmentCutout(
                 buffer.ToArray(),
                 "image/webp",
-                ColorNamer.Describe(dominant.R, dominant.G, dominant.B)));
+                ColorNamer.Describe(dominant.R, dominant.G, dominant.B)),
+            footprint);
     }
 
     /// <summary>

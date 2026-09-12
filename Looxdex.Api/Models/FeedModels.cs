@@ -36,6 +36,14 @@ public class DetectedItem
     /// </summary>
     public string? CutoutUrl { get; set; }
 
+    /// <summary>
+    /// A shop's photograph of the nearest thing in the catalogue. This is what the
+    /// tile shows when there is one: a garment worn in a street photo can be cut
+    /// out but never turned into a product shot, and the catalogue is full of
+    /// product shots.
+    /// </summary>
+    public string? ProductUrl { get; set; }
+
     /// <summary>Colour in the closet's vocabulary, e.g. "לבן"; null before a cutout exists.</summary>
     public string? ColorName { get; set; }
 

@@ -153,6 +153,7 @@ public class DetectionWorker : BackgroundService
                     // the feed can show product tiles instead of slices of the scene.
                     var pass = await cutouts.RenderAsync(photo, hits, ct);
                     var rendered = pass.Items;
+                    var claimed = new List<MaskFootprint>();
 
                     for (var i = 0; i < hits.Count; i++)
                     {
@@ -183,6 +184,24 @@ public class DetectionWorker : BackgroundService
                                 "Dropped {Label} at {Score:P0} on post {PostId}: no mask under the box.",
                                 h.Label, h.Score, post.Id);
                             continue;
+                        }
+
+                        // One garment, two names. A leopard coat comes back as both
+                        // a jacket and a buttoned shirt, and both land on precisely
+                        // the same pixels — so the second one is not another item,
+                        // it is the detector's second guess. Hits arrive in score
+                        // order, so the one already kept is the better guess.
+                        if (render?.MaskKey is { } footprint)
+                        {
+                            if (claimed.Any(c => c.Overlap(footprint) > 0.7))
+                            {
+                                _logger.LogInformation(
+                                    "Dropped {Label} at {Score:P0} on post {PostId}: same garment, second guess.",
+                                    h.Label, h.Score, post.Id);
+                                continue;
+                            }
+
+                            claimed.Add(footprint);
                         }
 
                         var item = new DetectedItemEntity

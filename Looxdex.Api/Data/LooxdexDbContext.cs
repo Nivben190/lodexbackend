@@ -22,6 +22,7 @@ public class LooxdexDbContext : DbContext
     public DbSet<UploadedImageEntity> UploadedImages => Set<UploadedImageEntity>();
     public DbSet<OwnerProfileEntity> OwnerProfiles => Set<OwnerProfileEntity>();
     public DbSet<OutfitEntity> Outfits => Set<OutfitEntity>();
+    public DbSet<ProductEntity> Products => Set<ProductEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -47,6 +48,18 @@ public class LooxdexDbContext : DbContext
                 .WithOne(d => d.FeedPost)
                 .HasForeignKey(d => d.FeedPostId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProductEntity>(entity =>
+        {
+            entity.HasIndex(e => new { e.Source, e.ExternalId }).IsUnique();
+            entity.HasIndex(e => e.ArticleType);
+
+            entity.Property(e => e.Embedding)
+                .HasConversion(embeddingConverter)
+                .Metadata.SetValueComparer(embeddingComparer);
+
+            entity.Property(e => e.Price).HasPrecision(10, 2);
         });
 
         modelBuilder.Entity<OutfitEntity>(entity =>

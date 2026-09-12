@@ -196,6 +196,40 @@ public class DemoContentOptions
     public bool Enabled { get; set; }
 }
 
+/// <summary>
+/// Matching a detected garment to a real product photograph.
+///
+/// This is the answer to a cut-out that nobody can read: rather than sharpening a
+/// scrap of somebody's holiday snap, show the shop's picture of the same kind of
+/// thing. Off by default, because it wants a third model in memory and a
+/// catalogue to match against.
+/// </summary>
+public class ProductMatchOptions
+{
+    public const string SectionName = "ProductMatch";
+
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>CLIP ViT-B/32 vision tower, quantised.</summary>
+    public string ModelUrl { get; set; } =
+        "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx";
+
+    public string FileName { get; set; } = "clip-vit-base-patch32-vision-quantized.onnx";
+
+    /// <summary>How many products to keep per detected item.</summary>
+    public int Alternatives { get; set; } = 4;
+
+    /// <summary>
+    /// Similarity a product must reach to be offered at all. Below it the nearest
+    /// thing in the catalogue is not the same garment, and showing it anyway is
+    /// worse than showing nothing.
+    /// </summary>
+    public double MinSimilarity { get; set; } = 0.86;
+
+    /// <summary>Products pulled per page while filling the catalogue.</summary>
+    public int IngestPageSize { get; set; } = 100;
+}
+
 public class HuggingFaceOptions
 {
     public const string SectionName = "HuggingFace";

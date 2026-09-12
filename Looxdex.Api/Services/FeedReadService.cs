@@ -276,6 +276,10 @@ public class FeedReadService
                     Height = d.BoxHeight
                 },
                 CutoutUrl = ImageUrlFor(d.CutoutImageId),
+                ProductUrl = d.Alternatives
+                    .OrderBy(a => a.Id)
+                    .Select(a => ImageUrlFor(a.ImageUrl))
+                    .FirstOrDefault(u => u != null),
                 ColorName = d.ColorName,
                 ColorHex = d.ColorHex,
                 DisplayName = ProductName(d),
@@ -286,7 +290,9 @@ public class FeedReadService
                     Brand = a.Brand,
                     Name = a.Name,
                     Price = a.Price,
-                    ImageUrl = a.ImageUrl,
+                    // A matched product stores the id of the picture we kept; an
+                    // older row may still hold a URL of its own.
+                    ImageUrl = ImageUrlFor(a.ImageUrl) ?? a.ImageUrl,
                     StoreUrl = a.StoreUrl
                 }).ToList()
             })
