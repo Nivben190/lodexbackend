@@ -5,6 +5,33 @@ services:
     dockerfilePath: ./Looxdex.Api/Dockerfile
     dockerContext: ./Looxdex.Api
     plan: free
+    healthCheckPath: /health
     envVars:
+      # Web origins allowed to call this API, comma separated.
       - key: ALLOWED_ORIGINS
-        value: ""
+        value: https://looxdex.netlify.app
+
+      # Supabase Postgres. Set the password in the dashboard — never here.
+      - key: Supabase__Host
+        value: aws-0-ap-northeast-2.pooler.supabase.com
+      - key: Supabase__Port
+        value: "5432"
+      - key: Supabase__ProjectRef
+        value: cjdzkowleaxvamkvblfz
+      - key: Supabase__DbPassword
+        sync: false
+
+      # Pexels ingest key.
+      - key: Pexels__ApiKey
+        sync: false
+
+      # Fashion detection loads a ~57MB ONNX model into memory. The free
+      # instance has 512MB, so it is off by default here and the pipeline is
+      # run elsewhere against the same database. Set to true on a paid
+      # instance to bring it in-process.
+      - key: OnnxDetection__Enabled
+        value: "false"
+
+      # Ingest runs wherever detection runs, for the same reason.
+      - key: Pexels__Interval
+        value: "00:00:00"
