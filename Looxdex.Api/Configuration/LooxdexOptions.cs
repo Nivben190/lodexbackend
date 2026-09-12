@@ -89,6 +89,52 @@ public class OnnxDetectionOptions
     public int IntraOpThreads { get; set; } = 1;
 }
 
+/// <summary>
+/// Cutting the detected garment out of the photo, so an item reads as a product
+/// shot rather than a slice of someone's holiday snap.
+///
+/// A separate model from the detector: YOLOS gives boxes and labels, this gives
+/// per-pixel garment classes. Both are needed — the box says which instance we
+/// mean, the mask says which pixels are actually the garment rather than the
+/// wearer's hands, face and background.
+/// </summary>
+public class GarmentCutoutOptions
+{
+    public const string SectionName = "GarmentCutout";
+
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>SegFormer-B2 fine-tuned on ATR (18 clothing classes), quantised to ~29MB.</summary>
+    public string ModelUrl { get; set; } =
+        "https://huggingface.co/Xenova/segformer_b2_clothes/resolve/main/onnx/model_quantized.onnx";
+
+    public string FileName { get; set; } = "segformer-b2-clothes-quantized.onnx";
+
+    /// <summary>The processor this model was exported with resizes to a square 512.</summary>
+    public int InputSize { get; set; } = 512;
+
+    /// <summary>Side of the square tile written for each item.</summary>
+    public int TileSize { get; set; } = 600;
+
+    /// <summary>Transparent margin inside the tile, as a fraction of its side.</summary>
+    public double TileInset { get; set; } = 0.09;
+
+    /// <summary>
+    /// Grow the detection box before masking. YOLOS clips sleeves and hems, and
+    /// outside the box the mask is what stops the crop running away.
+    /// </summary>
+    public double BoxPadding { get; set; } = 0.35;
+
+    /// <summary>
+    /// Below this many mask pixels the cutout is thin, blocky and worse than the
+    /// plain crop — belts and thin straps land here — so no tile is written.
+    /// </summary>
+    public int MinMaskPixels { get; set; } = 20000;
+
+    /// <summary>Posts per pass of the cutout backfill.</summary>
+    public int BackfillBatchSize { get; set; } = 8;
+}
+
 public class HuggingFaceOptions
 {
     public const string SectionName = "HuggingFace";

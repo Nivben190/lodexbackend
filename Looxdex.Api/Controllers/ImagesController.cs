@@ -10,12 +10,6 @@ namespace Looxdex.Api.Controllers;
 [Route("api/[controller]")]
 public class ImagesController : ControllerBase
 {
-    /// <summary>
-    /// Hard ceiling on a stored photo. The client downscales before sending, so
-    /// anything near this is either an unusual camera or a bad actor.
-    /// </summary>
-    private const int MaxBytes = 4 * 1024 * 1024;
-
     private static readonly HashSet<string> AllowedTypes = new(StringComparer.OrdinalIgnoreCase)
     {
         "image/jpeg",
@@ -36,7 +30,7 @@ public class ImagesController : ControllerBase
 
     /// <summary>Stores a photo from the wearer's device and returns its URL.</summary>
     [HttpPost]
-    [RequestSizeLimit(MaxBytes + 512 * 1024)]
+    [RequestSizeLimit(StoredImages.MaxBytes + 512 * 1024)]
     public async Task<ActionResult> Upload(IFormFile? file, CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -44,7 +38,7 @@ public class ImagesController : ControllerBase
             return BadRequest(new { error = "לא נבחרה תמונה." });
         }
 
-        if (file.Length > MaxBytes)
+        if (file.Length > StoredImages.MaxBytes)
         {
             return BadRequest(new { error = "התמונה גדולה מדי." });
         }
@@ -60,7 +54,7 @@ public class ImagesController : ControllerBase
 
         // Trust the bytes, not the declared type: a renamed file would otherwise
         // be stored and served back under whatever content type the client claimed.
-        var sniffed = SniffContentType(bytes);
+        var sniffed = StoredImages.SniffContentType(bytes);
         if (sniffed is null)
         {
             return BadRequest(new { error = "הקובץ אינו תמונה תקינה." });
@@ -105,22 +99,5 @@ public class ImagesController : ControllerBase
         Response.Headers.CacheControl = "public, max-age=31536000, immutable";
 
         return File(image.Data, image.ContentType);
-    }
-
-    /// <summary>Identifies a format from its magic bytes, or null if unrecognised.</summary>
-    private static string? SniffContentType(ReadOnlySpan<byte> bytes)
-    {
-        if (bytes.Length < 12) return null;
-
-        if (bytes[0] == 0xFF && bytes[1] == 0xD8) return "image/jpeg";
-
-        if (bytes[0] == 0x89 && bytes[1] == 'P' && bytes[2] == 'N' && bytes[3] == 'G')
-            return "image/png";
-
-        if (bytes[0] == 'R' && bytes[1] == 'I' && bytes[2] == 'F' && bytes[3] == 'F'
-            && bytes[8] == 'W' && bytes[9] == 'E' && bytes[10] == 'B' && bytes[11] == 'P')
-            return "image/webp";
-
-        return null;
     }
 }

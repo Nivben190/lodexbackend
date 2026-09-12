@@ -5,6 +5,10 @@ public class ClosetItem
     public int Id { get; set; }
     public string Name { get; set; } = string.Empty;
     public string ImageUrl { get; set; } = string.Empty;
+
+    /// <summary>The image is a cut-out on transparency, not a photograph.</summary>
+    public bool ImageIsCutout { get; set; }
+
     public string Category { get; set; } = string.Empty;
     public string Color { get; set; } = string.Empty;
     public string ColorHex { get; set; } = "#000000";
@@ -26,6 +30,10 @@ public class CreateClosetItemRequest
 
     public string Name { get; set; } = string.Empty;
     public string ImageUrl { get; set; } = string.Empty;
+
+    /// <summary>The image is a cut-out on transparency, not a photograph.</summary>
+    public bool ImageIsCutout { get; set; }
+
     public string Category { get; set; } = string.Empty;
     public string Color { get; set; } = string.Empty;
     public string ColorHex { get; set; } = "#000000";

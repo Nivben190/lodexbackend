@@ -1,6 +1,7 @@
 using Looxdex.Api.Data;
 using Looxdex.Api.Entities;
 using Looxdex.Api.Models;
+using Looxdex.Api.Services.Detection;
 using Microsoft.EntityFrameworkCore;
 
 namespace Looxdex.Api.Services;
@@ -13,11 +14,13 @@ public class FeedReadService
 
     private readonly LooxdexDbContext _db;
     private readonly IOwnerContext _owner;
+    private readonly IHttpContextAccessor _http;
 
-    public FeedReadService(LooxdexDbContext db, IOwnerContext owner)
+    public FeedReadService(LooxdexDbContext db, IOwnerContext owner, IHttpContextAccessor http)
     {
         _db = db;
         _owner = owner;
+        _http = http;
     }
 
     public async Task<FeedPage> GetPageAsync(
@@ -205,7 +208,41 @@ public class FeedReadService
                && int.TryParse(parts[1], out id);
     }
 
-    private static FeedPost ToDto(FeedPostEntity e, bool isSaved) => new()
+    /// <summary>
+    /// Absolute URL for a stored image.
+    ///
+    /// Built from the current request rather than a configured host: the same
+    /// database is served by localhost during development and by the deployed API
+    /// in production, so a host baked into the row would be wrong for one of them.
+    /// </summary>
+    private string? ImageUrlFor(string? imageId)
+    {
+        if (string.IsNullOrWhiteSpace(imageId)) return null;
+
+        var request = _http.HttpContext?.Request;
+        if (request is null) return $"/api/images/{imageId}";
+
+        return $"{request.Scheme}://{request.Host}/api/images/{imageId}";
+    }
+
+    /// <summary>
+    /// What to call the item in a list: the garment and its colour, agreeing in
+    /// gender and number, e.g. "מכנסיים כחולים" rather than "מכנסיים כחול".
+    /// </summary>
+    private static string ProductName(DetectedItemEntity item)
+    {
+        var label = FashionpediaLabels.Resolve(item.Label);
+        var noun = label?.ProductName ?? item.LabelHe;
+
+        if (string.IsNullOrWhiteSpace(item.ColorName)) return noun;
+
+        var adjective = ColorNamer.Inflect(
+            item.ColorName, label?.Form ?? HebrewForm.MasculineSingular);
+
+        return string.IsNullOrWhiteSpace(adjective) ? noun : $"{noun} {adjective}";
+    }
+
+    private FeedPost ToDto(FeedPostEntity e, bool isSaved) => new()
     {
         Id = e.Id,
         ImageUrl = e.ImageUrl,
@@ -214,6 +251,8 @@ public class FeedReadService
         Photographer = e.Photographer,
         PhotographerUrl = e.PhotographerUrl,
         SourceUrl = e.SourceUrl,
+        EmbedHtml = e.EmbedHtml,
+        Source = e.Source.ToString().ToLowerInvariant(),
         Location = e.Location,
         Likes = e.Likes,
         AspectRatioWidth = e.AspectRatioWidth,
@@ -236,6 +275,11 @@ public class FeedReadService
                     Width = d.BoxWidth,
                     Height = d.BoxHeight
                 },
+                CutoutUrl = ImageUrlFor(d.CutoutImageId),
+                ColorName = d.ColorName,
+                ColorHex = d.ColorHex,
+                DisplayName = ProductName(d),
+                Subtitle = d.Category == d.LabelHe ? d.Category : $"{d.Category} · {d.LabelHe}",
                 Alternatives = d.Alternatives.Select(a => new ShoppingAlternative
                 {
                     Id = a.Id,

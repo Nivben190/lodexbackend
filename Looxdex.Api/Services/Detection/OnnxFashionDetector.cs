@@ -22,7 +22,14 @@ public record DetectionHit(
 public interface IFashionDetector
 {
     bool Enabled { get; }
+
     Task<IReadOnlyList<DetectionHit>> DetectAsync(string imageUrl, CancellationToken ct);
+
+    /// <summary>
+    /// Same pass over bytes already in hand. The cutout stage needs the very same
+    /// photo, and fetching it twice doubles the egress for no gain.
+    /// </summary>
+    Task<IReadOnlyList<DetectionHit>> DetectAsync(byte[] photo, CancellationToken ct);
 }
 
 /// <summary>
@@ -39,9 +46,7 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
     private static readonly float[] Mean = { 0.485f, 0.456f, 0.406f };
     private static readonly float[] Std = { 0.229f, 0.224f, 0.225f };
 
-    public const string HttpClientName = "detector-images";
-
-    private readonly IHttpClientFactory _httpFactory;
+    private readonly ImageFetcher _fetcher;
     private readonly ModelProvider _modelProvider;
     private readonly OnnxDetectionOptions _options;
     private readonly ILogger<OnnxFashionDetector> _logger;
@@ -57,12 +62,12 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
     private string? _boxesName;
 
     public OnnxFashionDetector(
-        IHttpClientFactory httpFactory,
+        ImageFetcher fetcher,
         ModelProvider modelProvider,
         IOptions<OnnxDetectionOptions> options,
         ILogger<OnnxFashionDetector> logger)
     {
-        _httpFactory = httpFactory;
+        _fetcher = fetcher;
         _modelProvider = modelProvider;
         _options = options.Value;
         _logger = logger;
@@ -74,16 +79,23 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
     {
         if (!Enabled) return Array.Empty<DetectionHit>();
 
+        var bytes = await _fetcher.FetchAsync(imageUrl, ct);
+        if (bytes is null) return Array.Empty<DetectionHit>();
+
+        return await DetectAsync(bytes, ct);
+    }
+
+    public async Task<IReadOnlyList<DetectionHit>> DetectAsync(byte[] photo, CancellationToken ct)
+    {
+        if (!Enabled) return Array.Empty<DetectionHit>();
+
         var session = await GetSessionAsync(ct);
         if (session is null) return Array.Empty<DetectionHit>();
-
-        var bytes = await DownloadAsync(imageUrl, ct);
-        if (bytes is null) return Array.Empty<DetectionHit>();
 
         await _inferenceGate.WaitAsync(ct);
         try
         {
-            using var image = Image.Load<Rgb24>(bytes);
+            using var image = Image.Load<Rgb24>(photo);
 
             var input = BuildInputTensor(image);
 
@@ -99,7 +111,7 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Detection failed for {Url}.", imageUrl);
+            _logger.LogWarning(ex, "Detection pass failed.");
             return Array.Empty<DetectionHit>();
         }
         finally
@@ -273,7 +285,8 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
         {
             if (_session is not null) return _session;
 
-            var modelPath = await _modelProvider.GetModelPathAsync(ct);
+            var modelPath = await _modelProvider.GetModelPathAsync(
+                _options.ModelUrl, _options.FileName, ct);
             if (modelPath is null) return null;
 
             // Fully qualified: ASP.NET Core also defines a SessionOptions.
@@ -311,28 +324,6 @@ public class OnnxFashionDetector : IFashionDetector, IDisposable
         finally
         {
             _sessionGate.Release();
-        }
-    }
-
-    private async Task<byte[]?> DownloadAsync(string imageUrl, CancellationToken ct)
-    {
-        try
-        {
-            var http = _httpFactory.CreateClient(HttpClientName);
-            using var response = await http.GetAsync(imageUrl, ct);
-            if (!response.IsSuccessStatusCode)
-            {
-                _logger.LogWarning(
-                    "Image download failed for {Url}: {Status}.", imageUrl, response.StatusCode);
-                return null;
-            }
-
-            return await response.Content.ReadAsByteArrayAsync(ct);
-        }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
-        {
-            _logger.LogWarning(ex, "Image download errored for {Url}.", imageUrl);
-            return null;
         }
     }
 

@@ -16,6 +16,13 @@ public class ClosetItemEntity
     [MaxLength(1024)]
     public string ImageUrl { get; set; } = string.Empty;
 
+    /// <summary>
+    /// True when the image is a cut-out on a transparent background rather than a
+    /// photograph. The grid frames the two differently: a packshot is fitted into
+    /// the tile, a photograph fills it.
+    /// </summary>
+    public bool ImageIsCutout { get; set; }
+
     [MaxLength(100)]
     public string Category { get; set; } = string.Empty;
 

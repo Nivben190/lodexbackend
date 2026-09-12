@@ -75,6 +75,8 @@ public class DetectionWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<LooxdexDbContext>();
         var detector = scope.ServiceProvider.GetRequiredService<IFashionDetector>();
+        var fetcher = scope.ServiceProvider.GetRequiredService<ImageFetcher>();
+        var cutouts = scope.ServiceProvider.GetRequiredService<IGarmentCutoutService>();
 
         if (!detector.Enabled) return 0;
 
@@ -94,7 +96,17 @@ public class DetectionWorker : BackgroundService
 
             try
             {
-                var hits = await detector.DetectAsync(post.ImageUrl, ct);
+                var photo = await fetcher.FetchAsync(post.ImageUrl, ct);
+                if (photo is null)
+                {
+                    if (post.DetectionAttempts >= _options.MaxAttempts)
+                    {
+                        post.DetectionState = DetectionState.Failed;
+                    }
+                    continue;
+                }
+
+                var hits = await detector.DetectAsync(photo, ct);
 
                 if (hits.Count == 0)
                 {
@@ -106,18 +118,37 @@ public class DetectionWorker : BackgroundService
                 }
                 else
                 {
-                    db.DetectedItems.AddRange(hits.Select(h => new DetectedItemEntity
+                    // Cut each garment out of the same photo while it is in hand, so
+                    // the feed can show product tiles instead of slices of the scene.
+                    var rendered = await cutouts.RenderAsync(photo, hits, ct);
+
+                    for (var i = 0; i < hits.Count; i++)
                     {
-                        FeedPostId = post.Id,
-                        Label = h.Label,
-                        LabelHe = h.LabelHe,
-                        Category = h.Category,
-                        Score = h.Score,
-                        BoxX = h.X,
-                        BoxY = h.Y,
-                        BoxWidth = h.Width,
-                        BoxHeight = h.Height
-                    }));
+                        var h = hits[i];
+                        var item = new DetectedItemEntity
+                        {
+                            FeedPostId = post.Id,
+                            Label = h.Label,
+                            LabelHe = h.LabelHe,
+                            Category = h.Category,
+                            Score = h.Score,
+                            BoxX = h.X,
+                            BoxY = h.Y,
+                            BoxWidth = h.Width,
+                            BoxHeight = h.Height
+                        };
+
+                        item.CutoutAttemptedAt = DateTime.UtcNow;
+
+                        if (rendered.TryGetValue(i, out var cutout))
+                        {
+                            item.CutoutImageId = StoreCutout(db, cutout);
+                            item.ColorName = cutout.Color.Name;
+                            item.ColorHex = cutout.Color.Hex;
+                        }
+
+                        db.DetectedItems.Add(item);
+                    }
 
                     post.DetectionState = DetectionState.Completed;
                     post.DetectedAt = DateTime.UtcNow;
@@ -140,5 +171,103 @@ public class DetectionWorker : BackgroundService
             "Detection sweep: {Completed}/{Total} posts analysed.", completed, pending.Count);
 
         return pending.Count;
+    }
+
+    /// <summary>
+    /// Renders cutouts for items that were detected before there was a cutout stage.
+    ///
+    /// Only the segmenter runs: the boxes are already in the database, so there is
+    /// no reason to pay for detection a second time. Returns posts and items done.
+    /// </summary>
+    public async Task<(int Posts, int Items)> RebuildCutoutsAsync(
+        int? batchSize, bool force, CancellationToken ct)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<LooxdexDbContext>();
+        var fetcher = scope.ServiceProvider.GetRequiredService<ImageFetcher>();
+        var cutouts = scope.ServiceProvider.GetRequiredService<IGarmentCutoutService>();
+        var cutoutOptions = scope.ServiceProvider
+            .GetRequiredService<IOptions<GarmentCutoutOptions>>().Value;
+
+        if (!cutouts.Enabled) return (0, 0);
+
+        var take = Math.Clamp(batchSize ?? cutoutOptions.BackfillBatchSize, 1, 50);
+
+        var posts = await db.FeedPosts
+            .Include(p => p.DetectedItems)
+            .Where(p => p.DetectedItems.Any(d => force || d.CutoutAttemptedAt == null))
+            .OrderByDescending(p => p.Rank)
+            .Take(take)
+            .ToListAsync(ct);
+
+        if (posts.Count == 0) return (0, 0);
+
+        var rendered = 0;
+
+        foreach (var post in posts)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var items = post.DetectedItems
+                .Where(d => force || d.CutoutAttemptedAt == null)
+                .ToList();
+
+            if (items.Count == 0) continue;
+
+            var photo = await fetcher.FetchAsync(post.ImageUrl, ct);
+            if (photo is null) continue;
+
+            var hits = items
+                .Select(d => new DetectionHit(
+                    d.Label, d.LabelHe, d.Category, d.Score,
+                    d.BoxX, d.BoxY, d.BoxWidth, d.BoxHeight))
+                .ToList();
+
+            var results = await cutouts.RenderAsync(photo, hits, ct);
+
+            for (var i = 0; i < items.Count; i++)
+            {
+                items[i].CutoutAttemptedAt = DateTime.UtcNow;
+
+                if (!results.TryGetValue(i, out var cutout))
+                {
+                    // A re-run that now rejects this mask must also drop what the
+                    // old rules produced, or the item keeps showing a tile the
+                    // current thresholds would never have written.
+                    if (force) items[i].CutoutImageId = null;
+                    continue;
+                }
+
+                items[i].CutoutImageId = StoreCutout(db, cutout);
+                items[i].ColorName = cutout.Color.Name;
+                items[i].ColorHex = cutout.Color.Hex;
+                rendered++;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Cutout backfill: {Items} items across {Posts} posts.", rendered, posts.Count);
+
+        return (posts.Count, rendered);
+    }
+
+    /// <summary>Stores a rendered tile alongside the uploads and returns its id.</summary>
+    private static string StoreCutout(LooxdexDbContext db, GarmentCutout cutout)
+    {
+        var id = Guid.NewGuid().ToString("N");
+
+        db.UploadedImages.Add(new UploadedImageEntity
+        {
+            Id = id,
+            OwnerKey = "system:cutout",
+            ContentType = cutout.ContentType,
+            Data = cutout.Image,
+            ByteSize = cutout.Image.Length,
+            CreatedAt = DateTime.UtcNow
+        });
+
+        return id;
     }
 }

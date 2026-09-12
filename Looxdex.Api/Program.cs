@@ -37,6 +37,8 @@ builder.Services.Configure<PexelsOptions>(
     builder.Configuration.GetSection(PexelsOptions.SectionName));
 builder.Services.Configure<OnnxDetectionOptions>(
     builder.Configuration.GetSection(OnnxDetectionOptions.SectionName));
+builder.Services.Configure<GarmentCutoutOptions>(
+    builder.Configuration.GetSection(GarmentCutoutOptions.SectionName));
 
 // ---- persistence ---------------------------------------------------------
 // Postgres (Supabase). The connection string comes from configuration:
@@ -123,13 +125,20 @@ builder.Services.AddHttpClient(ModelProvider.HttpClientName, client =>
     client.Timeout = TimeSpan.FromMinutes(10);
 });
 
-builder.Services.AddHttpClient(OnnxFashionDetector.HttpClientName, client =>
+builder.Services.AddHttpClient<InstagramOEmbedService>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+});
+
+builder.Services.AddHttpClient(ImageFetcher.HttpClientName, client =>
 {
     client.Timeout = TimeSpan.FromSeconds(60);
 });
 
+builder.Services.AddSingleton<ImageFetcher>();
 builder.Services.AddSingleton<ModelProvider>();
 builder.Services.AddSingleton<IFashionDetector, OnnxFashionDetector>();
+builder.Services.AddSingleton<IGarmentCutoutService, GarmentCutoutService>();
 
 builder.Services.AddHostedService<IngestWorker>();
 builder.Services.AddHostedService<DetectionWorker>();
@@ -153,7 +162,22 @@ builder.Services.AddCors(options =>
     });
 });
 
+builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+                               | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedHost;
+
+    // The proxy is the platform's, not ours, and its address is not known ahead
+    // of time; clearing these accepts the header from whatever sits in front.
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 var app = builder.Build();
+
+// Before anything that builds a URL from the request: the scheme and host must
+// already be the public ones by then.
+app.UseForwardedHeaders();
 
 // Apply migrations and seed the demo content on boot.
 using (var scope = app.Services.CreateScope())

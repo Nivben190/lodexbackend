@@ -57,6 +57,20 @@ public class AdminController : ControllerBase
     }
 
     /// <summary>
+    /// Renders product cutouts for items detected before the cutout stage existed.
+    /// Call repeatedly until it reports zero: one call handles one batch.
+    /// </summary>
+    [HttpPost("rebuild-cutouts")]
+    public async Task<ActionResult> RebuildCutouts(
+        [FromQuery] int? batchSize,
+        [FromQuery] bool force = false,
+        CancellationToken ct = default)
+    {
+        var (posts, items) = await _detection.RebuildCutoutsAsync(batchSize, force, ct);
+        return Ok(new { posts, items });
+    }
+
+    /// <summary>
     /// Puts failed posts back in the queue and clears their attempt count.
     /// Use after fixing whatever made detection fail, so the backlog is retried.
     /// </summary>

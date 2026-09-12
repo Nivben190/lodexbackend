@@ -3,6 +3,7 @@ using System;
 using Looxdex.Api.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Looxdex.Api.Migrations
 {
     [DbContext(typeof(LooxdexDbContext))]
-    partial class LooxdexDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260912191510_AddLookSourceEmbed")]
+    partial class AddLookSourceEmbed
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -72,10 +75,6 @@ namespace Looxdex.Api.Migrations
                         .HasMaxLength(60)
                         .HasColumnType("character varying(60)")
                         .HasColumnName("formality");
-
-                    b.Property<bool>("ImageIsCutout")
-                        .HasColumnType("boolean")
-                        .HasColumnName("image_is_cutout");
 
                     b.Property<string>("ImageUrl")
                         .IsRequired()
@@ -158,10 +157,6 @@ namespace Looxdex.Api.Migrations
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)")
                         .HasColumnName("color_name");
-
-                    b.Property<DateTime?>("CutoutAttemptedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("cutout_attempted_at");
 
                     b.Property<string>("CutoutImageId")
                         .HasMaxLength(32)

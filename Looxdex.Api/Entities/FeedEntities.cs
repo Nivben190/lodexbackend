@@ -8,7 +8,13 @@ public enum FeedSource
     Seed = 0,
     Pexels = 1,
     Unsplash = 2,
-    UserUpload = 3
+    UserUpload = 3,
+
+    /// <summary>
+    /// A look the wearer brought in from Instagram: our copy of the image for
+    /// analysis, and the creator's post embedded for credit.
+    /// </summary>
+    Instagram = 4
 }
 
 /// <summary>Progress of the fashion-detection pass over an image.</summary>
@@ -70,6 +76,16 @@ public class FeedPostEntity
     /// <summary>Stable ordering key for cursor pagination (descending).</summary>
     public long Rank { get; set; }
 
+    /// <summary>
+    /// Official embed markup from the provider, for showing the source post where
+    /// it was published rather than restating it ourselves.
+    ///
+    /// Stored as returned: it is Instagram's own HTML, and rewriting it would both
+    /// break the embed script and step outside what the oEmbed licence covers.
+    /// Null for library photos, which carry a plain photographer credit instead.
+    /// </summary>
+    public string? EmbedHtml { get; set; }
+
     public List<DetectedItemEntity> DetectedItems { get; set; } = new();
 }
 
@@ -98,6 +114,29 @@ public class DetectedItemEntity
     public double BoxY { get; set; }
     public double BoxWidth { get; set; }
     public double BoxHeight { get; set; }
+
+    /// <summary>
+    /// Id in <see cref="UploadedImageEntity"/> of the garment cut out of the photo,
+    /// or null when the mask was unusable and the item falls back to a plain crop.
+    /// Stored as an id rather than a URL so the host is never baked into the row —
+    /// the same database serves localhost and production.
+    /// </summary>
+    [MaxLength(32)]
+    public string? CutoutImageId { get; set; }
+
+    /// <summary>
+    /// When the cutout stage last looked at this item, whether or not it produced
+    /// one. Without it a garment the segmenter cannot isolate is picked up by
+    /// every following pass, and the backfill never moves past it.
+    /// </summary>
+    public DateTime? CutoutAttemptedAt { get; set; }
+
+    /// <summary>Dominant colour of the cutout, in the closet's own colour vocabulary.</summary>
+    [MaxLength(40)]
+    public string? ColorName { get; set; }
+
+    [MaxLength(9)]
+    public string? ColorHex { get; set; }
 
     /// <summary>CLIP embedding of the cropped region; null until phase 4 has run.</summary>
     public float[]? Embedding { get; set; }

@@ -1,6 +1,32 @@
 namespace Looxdex.Api.Services.Detection;
 
-public record FashionLabel(string LabelHe, string Category);
+/// <summary>
+/// Hebrew agreement class of a garment noun. An adjective has to match it, so
+/// "מכנסיים" takes "כחולים" while "חולצה" takes "כחולה".
+/// </summary>
+public enum HebrewForm
+{
+    MasculineSingular,
+    FeminineSingular,
+    MasculinePlural,
+    FemininePlural
+}
+
+/// <param name="LabelHe">What the overlay calls the item.</param>
+/// <param name="Category">Closet category it files under.</param>
+/// <param name="Form">Agreement class, for naming the item with its colour.</param>
+/// <param name="DisplayHe">
+/// Shorter name for a product tile, where the overlay label would read as a list.
+/// Defaults to <paramref name="LabelHe"/>.
+/// </param>
+public record FashionLabel(
+    string LabelHe,
+    string Category,
+    HebrewForm Form,
+    string? DisplayHe = null)
+{
+    public string ProductName => DisplayHe ?? LabelHe;
+}
 
 /// <summary>
 /// Maps Fashionpedia's 46 classes onto the app's Hebrew labels and closet categories.
@@ -15,43 +41,44 @@ public static class FashionpediaLabels
     private static readonly Dictionary<string, FashionLabel> Map = new(StringComparer.OrdinalIgnoreCase)
     {
         // --- tops ---
-        ["shirt, blouse"] = new("חולצה מכופתרת", "חולצות"),
-        ["top, t-shirt, sweatshirt"] = new("טופ / חולצת טי", "חולצות"),
-        ["sweater"] = new("סוודר", "חולצות"),
-        ["cardigan"] = new("קרדיגן", "חולצות"),
-        ["vest"] = new("וסט", "חולצות"),
+        ["shirt, blouse"] = new("חולצה מכופתרת", "חולצות", HebrewForm.FeminineSingular),
+        ["top, t-shirt, sweatshirt"] = new("טופ / חולצת טי", "חולצות", HebrewForm.MasculineSingular, "טופ"),
+        ["sweater"] = new("סוודר", "חולצות", HebrewForm.MasculineSingular),
+        ["cardigan"] = new("קרדיגן", "חולצות", HebrewForm.MasculineSingular),
+        ["vest"] = new("וסט", "חולצות", HebrewForm.MasculineSingular),
 
         // --- outerwear ---
-        ["jacket"] = new("ז'קט", "חולצות"),
-        ["coat"] = new("מעיל", "חולצות"),
-        ["cape"] = new("קייפ", "חולצות"),
+        ["jacket"] = new("ז'קט", "חולצות", HebrewForm.MasculineSingular),
+        ["coat"] = new("מעיל", "חולצות", HebrewForm.MasculineSingular),
+        ["cape"] = new("קייפ", "חולצות", HebrewForm.MasculineSingular),
 
         // --- bottoms ---
-        ["pants"] = new("מכנסיים", "מכנסיים"),
-        ["shorts"] = new("מכנסיים קצרים", "מכנסיים"),
-        ["skirt"] = new("חצאית", "שמלות"),
+        ["pants"] = new("מכנסיים", "מכנסיים", HebrewForm.MasculinePlural),
+        ["shorts"] = new("מכנסיים קצרים", "מכנסיים", HebrewForm.MasculinePlural),
+        ["skirt"] = new("חצאית", "שמלות", HebrewForm.FeminineSingular),
 
         // --- one-piece ---
-        ["dress"] = new("שמלה", "שמלות"),
-        ["jumpsuit"] = new("אוברול", "שמלות"),
+        ["dress"] = new("שמלה", "שמלות", HebrewForm.FeminineSingular),
+        ["jumpsuit"] = new("אוברול", "שמלות", HebrewForm.MasculineSingular),
 
         // --- footwear & legwear ---
-        ["shoe"] = new("נעליים", "נעליים"),
-        ["sock"] = new("גרביים", "נעליים"),
-        ["tights, stockings"] = new("גרביונים", "נעליים"),
-        ["leg warmer"] = new("חממי רגליים", "נעליים"),
+        ["shoe"] = new("נעליים", "נעליים", HebrewForm.FemininePlural),
+        ["sock"] = new("גרביים", "נעליים", HebrewForm.MasculinePlural),
+        ["tights, stockings"] = new("גרביונים", "נעליים", HebrewForm.MasculinePlural),
+        ["leg warmer"] = new("חממי רגליים", "נעליים", HebrewForm.MasculinePlural),
 
         // --- bags & accessories ---
-        ["bag, wallet"] = new("תיק", "תיקים"),
-        ["belt"] = new("חגורה", "תיקים"),
-        ["scarf"] = new("צעיף", "תיקים"),
-        ["glasses"] = new("משקפיים", "תיקים"),
-        ["hat"] = new("כובע", "תיקים"),
-        ["headband, head covering, hair accessory"] = new("אביזר שיער", "תיקים"),
-        ["watch"] = new("שעון", "תיקים"),
-        ["tie"] = new("עניבה", "תיקים"),
-        ["glove"] = new("כפפות", "תיקים"),
-        ["umbrella"] = new("מטרייה", "תיקים")
+        ["bag, wallet"] = new("תיק", "תיקים", HebrewForm.MasculineSingular),
+        ["belt"] = new("חגורה", "תיקים", HebrewForm.FeminineSingular),
+        ["scarf"] = new("צעיף", "תיקים", HebrewForm.MasculineSingular),
+        ["glasses"] = new("משקפיים", "תיקים", HebrewForm.MasculinePlural),
+        ["hat"] = new("כובע", "תיקים", HebrewForm.MasculineSingular),
+        ["headband, head covering, hair accessory"] =
+            new("אביזר שיער", "תיקים", HebrewForm.MasculineSingular),
+        ["watch"] = new("שעון", "תיקים", HebrewForm.MasculineSingular),
+        ["tie"] = new("עניבה", "תיקים", HebrewForm.FeminineSingular),
+        ["glove"] = new("כפפות", "תיקים", HebrewForm.FemininePlural),
+        ["umbrella"] = new("מטרייה", "תיקים", HebrewForm.FeminineSingular)
     };
 
     /// <summary>

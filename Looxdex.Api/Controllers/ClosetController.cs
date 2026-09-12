@@ -85,6 +85,9 @@ public class ClosetController : ControllerBase
             OwnerKey = _owner.OwnerKey,
             Name = request.Name.Trim(),
             ImageUrl = string.IsNullOrWhiteSpace(request.ImageUrl) ? FallbackImage : request.ImageUrl,
+            // The stand-in is a photograph, so a request with no image of its own
+            // must not claim to be a cut-out.
+            ImageIsCutout = request.ImageIsCutout && !string.IsNullOrWhiteSpace(request.ImageUrl),
             Category = request.Category,
             Color = request.Color,
             ColorHex = request.ColorHex,
@@ -135,6 +138,7 @@ public class ClosetController : ControllerBase
         Id = e.Id,
         Name = e.Name,
         ImageUrl = e.ImageUrl,
+        ImageIsCutout = e.ImageIsCutout,
         Category = e.Category,
         Color = e.Color,
         ColorHex = e.ColorHex,

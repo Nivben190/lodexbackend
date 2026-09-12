@@ -30,6 +30,26 @@ public class DetectedItem
 
     public BoundingBox Box { get; set; } = new();
 
+    /// <summary>
+    /// The garment cut out of the photo on a transparent tile, or null when the
+    /// mask was not good enough and the client should fall back to the box crop.
+    /// </summary>
+    public string? CutoutUrl { get; set; }
+
+    /// <summary>Colour in the closet's vocabulary, e.g. "לבן"; null before a cutout exists.</summary>
+    public string? ColorName { get; set; }
+
+    public string? ColorHex { get; set; }
+
+    /// <summary>
+    /// What to call the item in a list: colour and garment, the way a shop would
+    /// title it. Falls back to the garment alone when the colour is unknown.
+    /// </summary>
+    public string DisplayName { get; set; } = string.Empty;
+
+    /// <summary>Closet category and garment type, for the caption under the tile.</summary>
+    public string Subtitle { get; set; } = string.Empty;
+
     public bool OwnedInCloset { get; set; }
     public int? MatchingClosetItemId { get; set; }
     public List<int> SimilarClosetItemIds { get; set; } = new();
@@ -51,6 +71,16 @@ public class FeedPost
     public string PhotographerUrl { get; set; } = string.Empty;
 
     public string SourceUrl { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Provider embed markup, when the look came from a post that should be shown
+    /// where it was published. Null for library photos.
+    /// </summary>
+    public string? EmbedHtml { get; set; }
+
+    /// <summary>Where the look came from, lowercased: "instagram", "pexels", "userupload".</summary>
+    public string Source { get; set; } = string.Empty;
+
     public string Location { get; set; } = string.Empty;
     public int Likes { get; set; }
     public int AspectRatioHeight { get; set; } = 4;
