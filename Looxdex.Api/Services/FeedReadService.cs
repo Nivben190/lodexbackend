@@ -272,6 +272,7 @@ public class FeedReadService
         AspectRatioHeight = e.AspectRatioHeight,
         IsSaved = isSaved,
         IsAnalyzed = e.DetectionState == DetectionState.Completed,
+        ShoppableItems = e.DetectedItems.Count(d => d.Alternatives.Count > 0),
         DetectedItems = e.DetectedItems
             .OrderByDescending(d => d.Score)
             .Select(d => new DetectedItem

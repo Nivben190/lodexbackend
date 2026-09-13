@@ -60,7 +60,7 @@ public class ProductMatcher
 
         var pending = await _db.DetectedItems
             .Include(d => d.Alternatives)
-            .Where(d => force || !d.Alternatives.Any())
+            .Where(d => force || d.MatchAttemptedAt == null)
             .OrderByDescending(d => d.Id)
             .Take(Math.Clamp(batchSize, 1, 100))
             .ToListAsync(ct);
@@ -75,6 +75,7 @@ public class ProductMatcher
         foreach (var item in pending)
         {
             ct.ThrowIfCancellationRequested();
+            item.MatchAttemptedAt = DateTime.UtcNow;
 
             if (force && item.Alternatives.Count > 0)
             {

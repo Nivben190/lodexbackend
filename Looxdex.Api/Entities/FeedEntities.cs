@@ -131,6 +131,13 @@ public class DetectedItemEntity
     /// </summary>
     public DateTime? CutoutAttemptedAt { get; set; }
 
+    /// <summary>
+    /// When this item was last looked for in the shops, whether or not anything
+    /// was found. Without it the same handful of unmatchable items is examined on
+    /// every pass and the rest are never reached.
+    /// </summary>
+    public DateTime? MatchAttemptedAt { get; set; }
+
     /// <summary>Dominant colour of the cutout, in the closet's own colour vocabulary.</summary>
     [MaxLength(40)]
     public string? ColorName { get; set; }

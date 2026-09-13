@@ -101,5 +101,11 @@ public class FeedPost
     /// <summary>False while detection is still pending for this image.</summary>
     public bool IsAnalyzed { get; set; }
 
+    /// <summary>
+    /// How many of the detected items were found for sale somewhere. Surfaced on
+    /// the tile so a look worth opening can be picked out without opening it.
+    /// </summary>
+    public int ShoppableItems { get; set; }
+
     public List<DetectedItem> DetectedItems { get; set; } = new();
 }
