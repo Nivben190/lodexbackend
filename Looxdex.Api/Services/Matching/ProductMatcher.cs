@@ -79,8 +79,11 @@ public class ProductMatcher
             ct.ThrowIfCancellationRequested();
             item.MatchAttemptedAt = DateTime.UtcNow;
 
-            if (force && item.Alternatives.Count > 0)
+            if (item.Alternatives.Count > 0)
             {
+                // Replacing, never appending: an item matched twice was listing
+                // every shop twice, and the tile was showing whichever row had been
+                // written first.
                 _db.ShoppingAlternatives.RemoveRange(item.Alternatives);
             }
 
@@ -152,6 +155,90 @@ public class ProductMatcher
 
         await _db.SaveChangesAsync(ct);
         return (pending.Count, matched);
+    }
+
+    /// <summary>
+    /// Orders a result: whether it is a catalogue photograph at all, then how much
+    /// it looks like the garment. Expressed as one number so it can be sorted, with
+    /// the studio verdict occupying the whole above and likeness the fraction.
+    /// </summary>
+    private static double Rank(double likeness, double studio) =>
+        (studio >= StudioThreshold ? 1 : 0) + Math.Clamp(likeness, 0, 0.999);
+
+    /// <summary>
+    /// How blank the background has to be to count as a catalogue photograph. A
+    /// leopard jacket on white scores 0.56 here; the same jacket photographed on
+    /// three different people scored 0.00, 0.00 and 0.00.
+    /// </summary>
+    private const double StudioThreshold = 0.35;
+
+    /// <summary>
+    /// Re-orders the shop results already stored, best photograph first, without
+    /// asking the search service anything. Only the thumbnails are re-read, so
+    /// this is free — which matters, because getting the ordering right took
+    /// several attempts and each lookup is metered.
+    /// </summary>
+    public async Task<(int Items, int Moved)> RestageAsync(int batchSize, CancellationToken ct)
+    {
+        var items = await _db.DetectedItems
+            .Include(d => d.Alternatives)
+            .Where(d => d.Alternatives.Any())
+            .OrderBy(d => d.Id)
+            .Take(Math.Clamp(batchSize, 1, 200))
+            .ToListAsync(ct);
+
+        var moved = 0;
+
+        foreach (var item in items)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var vector = await EmbedItemAsync(item, ct);
+            var scored = new List<(ShoppingAlternativeEntity Row, double Score)>();
+
+            foreach (var row in item.Alternatives)
+            {
+                var thumbnail = await _fetcher.FetchAsync(row.ImageUrl, ct);
+
+                if (thumbnail is null)
+                {
+                    scored.Add((row, -1));
+                    continue;
+                }
+
+                var likeness = 0.0;
+
+                if (vector is not null)
+                {
+                    var candidate = await _embedder.EmbedAsync(thumbnail, ct);
+                    if (candidate is not null) likeness = ClipEmbedder.Similarity(vector, candidate);
+                }
+
+                scored.Add((row, Rank(likeness, StudioLook.Score(thumbnail))));
+            }
+
+            var order = 0;
+            var first = item.Alternatives.OrderBy(a => a.Rank).ThenBy(a => a.Id).First().Id;
+            var ordered = scored.OrderByDescending(x => x.Score).ToList();
+
+            foreach (var (row, _) in ordered)
+            {
+                row.Rank = order++;
+            }
+
+            if (ordered[0].Row.Id != first) moved++;
+
+            // Nothing here is a catalogue photograph — every result is somebody
+            // wearing the thing. Worth asking again, where the packshots tend to
+            // sit deeper in the answers. What it has is kept until something better
+            // actually arrives: the matcher replaces an item's results when it finds
+            // any, and throwing these away first only guarantees an empty tile if
+            // the second attempt comes back with nothing.
+            if (ordered[0].Score < 1) item.MatchAttemptedAt = null;
+        }
+
+        await _db.SaveChangesAsync(ct);
+        return (items.Count, moved);
     }
 
     /// <summary>
@@ -244,11 +331,14 @@ public class ProductMatcher
 
         matches = verified;
 
+        var rank = 0;
+
         foreach (var match in matches)
         {
             _db.ShoppingAlternatives.Add(new ShoppingAlternativeEntity
             {
                 DetectedItemId = item.Id,
+                Rank = rank++,
                 Brand = Trim(match.Source, 120),
                 Name = Trim(match.Title, 200),
                 Price = match.Price,
@@ -289,6 +379,9 @@ public class ProductMatcher
             ? _searchOptions.MinCutoutSimilarity
             : _searchOptions.MinSimilarity;
 
+        // Score here is likeness plus how much the picture looks like a catalogue
+        // photograph, so the ordering is "the best picture of this garment" rather
+        // than "the picture most like our snapshot".
         var scored = new List<(VisualMatch Match, double Score)>();
         var best = 0.0;
         var titleRejected = 0;
@@ -313,7 +406,14 @@ public class ProductMatcher
             var score = ClipEmbedder.Similarity(vector, candidate);
             if (score > best) best = score;
 
-            if (score >= bar) scored.Add((match, score));
+            if (score < bar) continue;
+
+            // Sorted as a catalogue photograph first and a likeness second, not as
+            // a weighted blend of the two. Our picture was cut out of a photograph
+            // of a person, so another photograph of a person in the same jacket is
+            // genuinely the closer likeness — and it is not what the tile is for.
+            // Adding a bonus was not enough; likeness simply outvoted it.
+            scored.Add((match, Rank(score, StudioLook.Score(thumbnail))));
         }
 
         if (scored.Count == 0)

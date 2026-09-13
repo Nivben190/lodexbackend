@@ -181,6 +181,13 @@ public class ShoppingAlternativeEntity
     [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Where this sits among the results, best first. Ordering by insertion order
+    /// meant the picture on the tile was whichever row happened to be written
+    /// first, which is not the same as the best photograph of the garment.
+    /// </summary>
+    public int Rank { get; set; }
+
     public decimal Price { get; set; }
 
     /// <summary>

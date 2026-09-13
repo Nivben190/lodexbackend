@@ -291,14 +291,16 @@ public class FeedReadService
                 },
                 CutoutUrl = ImageUrlFor(d.CutoutImageId),
                 ProductUrl = d.Alternatives
-                    .OrderBy(a => a.Id)
+                    .OrderBy(a => a.Rank).ThenBy(a => a.Id)
                     .Select(a => ResolveImage(a.ImageUrl))
                     .FirstOrDefault(u => !string.IsNullOrEmpty(u)),
                 ColorName = d.ColorName,
                 ColorHex = d.ColorHex,
                 DisplayName = ProductName(d),
                 Subtitle = d.Category == d.LabelHe ? d.Category : $"{d.Category} · {d.LabelHe}",
-                Alternatives = d.Alternatives.Select(a => new ShoppingAlternative
+                Alternatives = d.Alternatives
+                    .OrderBy(a => a.Rank).ThenBy(a => a.Id)
+                    .Select(a => new ShoppingAlternative
                 {
                     Id = a.Id,
                     Brand = a.Brand,

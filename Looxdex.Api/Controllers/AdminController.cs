@@ -67,6 +67,18 @@ public class AdminController : ControllerBase
         return Ok(new { examined, matched });
     }
 
+    /// <summary>
+    /// Re-orders stored shop results so the best photograph of the garment is the
+    /// one on the tile. Costs nothing: no search is performed.
+    /// </summary>
+    [HttpPost("restage")]
+    public async Task<ActionResult> Restage(
+        [FromQuery] int batchSize = 20, CancellationToken ct = default)
+    {
+        var (items, moved) = await _matcher.RestageAsync(batchSize, ct);
+        return Ok(new { items, moved });
+    }
+
     /// <summary>How full the catalogue is, by category.</summary>
     [HttpGet("catalogue")]
     public async Task<ActionResult> Catalogue(CancellationToken ct)

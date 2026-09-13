@@ -252,8 +252,15 @@ public class VisualSearchOptions
     /// <summary>Supply via user-secrets locally, VISUALSEARCH__APIKEY in the environment.</summary>
     public string ApiKey { get; set; } = string.Empty;
 
-    /// <summary>How many shop results to ask for before checking them.</summary>
-    public int MaxResults { get; set; } = 12;
+    /// <summary>
+    /// How many shop results to consider before checking them.
+    ///
+    /// The search answers with sixty and costs the same whether we read twelve of
+    /// them or all sixty — and the packshot is often not in the first twelve,
+    /// because the results most like our photograph are other photographs of
+    /// people. Reading deeper costs local time and no quota at all.
+    /// </summary>
+    public int MaxResults { get; set; } = 45;
 
     /// <summary>
     /// How alike a shop's photograph must be to a crop of the look before it is
