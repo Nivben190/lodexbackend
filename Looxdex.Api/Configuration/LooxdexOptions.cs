@@ -230,6 +230,50 @@ public class ProductMatchOptions
     public int IngestPageSize { get; set; } = 100;
 }
 
+/// <summary>
+/// Reverse image search, for finding the garment on sale somewhere.
+///
+/// Preferred over matching against our own catalogue whenever a key is
+/// configured: it returns shops the wearer can actually buy from, with today's
+/// prices, rather than the nearest thing in a fixed dataset.
+/// </summary>
+public class VisualSearchOptions
+{
+    public const string SectionName = "VisualSearch";
+
+    public bool Enabled { get; set; } = true;
+
+    /// <summary>Supply via user-secrets locally, VISUALSEARCH__APIKEY in the environment.</summary>
+    public string ApiKey { get; set; } = string.Empty;
+
+    /// <summary>How many shop results to ask for before checking them.</summary>
+    public int MaxResults { get; set; } = 12;
+
+    /// <summary>
+    /// How alike a shop's photograph must be to the garment before it is offered.
+    /// Google is generous about what counts as similar; this is where that
+    /// generosity is spent rather than passed on.
+    /// </summary>
+    public double MinSimilarity { get; set; } = 0.80;
+
+    /// <summary>
+    /// How sure the detector has to have been before the shops are searched.
+    /// Lookups are metered, and a doubtful detection is the one least likely to
+    /// be worth one.
+    /// </summary>
+    public double MinDetectionScore { get; set; } = 0.75;
+
+    /// <summary>
+    /// Where our images can be reached from the outside.
+    ///
+    /// The search fetches the picture itself, so the address it is given has to be
+    /// one the internet can resolve. Matching run from a laptop against the shared
+    /// database would otherwise hand Google "http://localhost:5247/..." and be told,
+    /// accurately, that there are no results.
+    /// </summary>
+    public string PublicBaseUrl { get; set; } = string.Empty;
+}
+
 public class HuggingFaceOptions
 {
     public const string SectionName = "HuggingFace";

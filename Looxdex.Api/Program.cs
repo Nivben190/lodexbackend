@@ -44,6 +44,8 @@ builder.Services.Configure<DemoContentOptions>(
     builder.Configuration.GetSection(DemoContentOptions.SectionName));
 builder.Services.Configure<ProductMatchOptions>(
     builder.Configuration.GetSection(ProductMatchOptions.SectionName));
+builder.Services.Configure<VisualSearchOptions>(
+    builder.Configuration.GetSection(VisualSearchOptions.SectionName));
 
 // ---- persistence ---------------------------------------------------------
 // Postgres (Supabase). The connection string comes from configuration:
@@ -145,6 +147,12 @@ builder.Services.AddSingleton<ModelProvider>();
 builder.Services.AddSingleton<IFashionDetector, OnnxFashionDetector>();
 builder.Services.AddSingleton<IGarmentCutoutService, GarmentCutoutService>();
 builder.Services.AddSingleton<IClipEmbedder, ClipEmbedder>();
+builder.Services.AddHttpClient<IVisualSearch, SerpApiVisualSearch>(client =>
+{
+    // Lens takes its time; the call above measured about thirteen seconds.
+    client.Timeout = TimeSpan.FromSeconds(90);
+});
+
 builder.Services.AddScoped<ProductCatalogue>();
 builder.Services.AddScoped<ProductMatcher>();
 

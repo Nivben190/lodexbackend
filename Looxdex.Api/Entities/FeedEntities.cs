@@ -159,6 +159,13 @@ public class ShoppingAlternativeEntity
 
     public decimal Price { get; set; }
 
+    /// <summary>
+    /// Currency the price is in. Shops answer in their own money, and a number
+    /// with a shekel sign in front of it would simply be a lie.
+    /// </summary>
+    [MaxLength(8)]
+    public string Currency { get; set; } = string.Empty;
+
     [MaxLength(1024)]
     public string ImageUrl { get; set; } = string.Empty;
 

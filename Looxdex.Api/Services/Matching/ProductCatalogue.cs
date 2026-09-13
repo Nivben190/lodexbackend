@@ -225,4 +225,50 @@ public static class ProductCategories
         label is not null && ByLabel.TryGetValue(label.Trim(), out var types)
             ? types
             : Array.Empty<string>();
+
+    /// <summary>
+    /// Words a shop's own title should contain for the result to be the same kind
+    /// of garment.
+    ///
+    /// Reverse image search answers with what looks alike, and a burgundy jacket
+    /// and a burgundy wrap dress look a great deal alike — but one of them is not
+    /// a jacket, and the shop says so in its title. This is the cheapest check
+    /// available and it reads the seller's own words.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> TitleWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["shirt, blouse"] = new[] { "shirt", "blouse" },
+        ["top, t-shirt, sweatshirt"] = new[] { "top", "tee", "t-shirt", "tshirt", "tank", "cami", "sweatshirt", "shirt" },
+        ["sweater"] = new[] { "sweater", "jumper", "knit", "pullover", "cardigan" },
+        ["cardigan"] = new[] { "cardigan", "knit", "sweater" },
+        ["jacket"] = new[] { "jacket", "blazer", "coat", "bomber", "overshirt", "parka" },
+        ["coat"] = new[] { "coat", "jacket", "trench", "parka" },
+        ["vest"] = new[] { "vest", "waistcoat", "gilet" },
+        ["cape"] = new[] { "cape", "poncho", "coat" },
+        ["dress"] = new[] { "dress", "gown" },
+        ["jumpsuit"] = new[] { "jumpsuit", "romper", "playsuit", "overall" },
+        ["pants"] = new[] { "pant", "trouser", "jean", "denim", "chino", "legging", "cargo" },
+        ["shorts"] = new[] { "short" },
+        ["skirt"] = new[] { "skirt" },
+        ["shoe"] = new[] { "shoe", "sneaker", "boot", "heel", "loafer", "sandal", "flat", "pump", "trainer", "mule" },
+        ["sock"] = new[] { "sock" },
+        ["tights, stockings"] = new[] { "tight", "stocking", "legging", "hosiery" },
+        ["bag, wallet"] = new[] { "bag", "tote", "purse", "clutch", "backpack", "wallet", "satchel", "crossbody" },
+        ["belt"] = new[] { "belt" },
+        ["scarf"] = new[] { "scarf", "shawl", "stole", "wrap" },
+        ["hat"] = new[] { "hat", "cap", "beanie", "beret" },
+        ["glasses"] = new[] { "glasses", "sunglass", "eyewear", "shades", "frame" },
+        ["watch"] = new[] { "watch" },
+        ["tie"] = new[] { "tie" },
+        ["glove"] = new[] { "glove", "mitten" }
+    };
+
+    /// <summary>Whether a shop's title describes the same kind of garment.</summary>
+    public static bool TitleFits(string? label, string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return false;
+        if (label is null || !TitleWords.TryGetValue(label.Trim(), out var words)) return true;
+
+        return words.Any(w => title.Contains(w, StringComparison.OrdinalIgnoreCase));
+    }
 }

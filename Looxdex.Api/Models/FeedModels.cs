@@ -14,6 +14,9 @@ public class ShoppingAlternative
     public string Brand { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public decimal Price { get; set; }
+
+    /// <summary>Currency symbol or code the price is in; empty when the shop published none.</summary>
+    public string Currency { get; set; } = string.Empty;
     public string ImageUrl { get; set; } = string.Empty;
     public string StoreUrl { get; set; } = string.Empty;
 }

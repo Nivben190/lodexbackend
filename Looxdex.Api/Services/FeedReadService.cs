@@ -242,6 +242,19 @@ public class FeedReadService
         return string.IsNullOrWhiteSpace(adjective) ? noun : $"{noun} {adjective}";
     }
 
+    /// <summary>
+    /// A product picture is either one we stored, held as an id, or a shop's own,
+    /// held as a URL and linked rather than copied.
+    /// </summary>
+    private string ResolveImage(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+
+        return value.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? value
+            : ImageUrlFor(value) ?? string.Empty;
+    }
+
     private FeedPost ToDto(FeedPostEntity e, bool isSaved) => new()
     {
         Id = e.Id,
@@ -278,8 +291,8 @@ public class FeedReadService
                 CutoutUrl = ImageUrlFor(d.CutoutImageId),
                 ProductUrl = d.Alternatives
                     .OrderBy(a => a.Id)
-                    .Select(a => ImageUrlFor(a.ImageUrl))
-                    .FirstOrDefault(u => u != null),
+                    .Select(a => ResolveImage(a.ImageUrl))
+                    .FirstOrDefault(u => !string.IsNullOrEmpty(u)),
                 ColorName = d.ColorName,
                 ColorHex = d.ColorHex,
                 DisplayName = ProductName(d),
@@ -290,9 +303,8 @@ public class FeedReadService
                     Brand = a.Brand,
                     Name = a.Name,
                     Price = a.Price,
-                    // A matched product stores the id of the picture we kept; an
-                    // older row may still hold a URL of its own.
-                    ImageUrl = ImageUrlFor(a.ImageUrl) ?? a.ImageUrl,
+                    Currency = a.Currency,
+                    ImageUrl = ResolveImage(a.ImageUrl),
                     StoreUrl = a.StoreUrl
                 }).ToList()
             })

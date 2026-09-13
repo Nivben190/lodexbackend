@@ -20,22 +20,34 @@ public class ProductMatcher
 {
     private readonly LooxdexDbContext _db;
     private readonly IClipEmbedder _embedder;
+    private readonly IVisualSearch _visualSearch;
+    private readonly ImageFetcher _fetcher;
+    private readonly IHttpContextAccessor _http;
     private readonly ProductMatchOptions _options;
+    private readonly VisualSearchOptions _searchOptions;
     private readonly ILogger<ProductMatcher> _logger;
 
     public ProductMatcher(
         LooxdexDbContext db,
         IClipEmbedder embedder,
+        IVisualSearch visualSearch,
+        ImageFetcher fetcher,
+        IHttpContextAccessor http,
         IOptions<ProductMatchOptions> options,
+        IOptions<VisualSearchOptions> searchOptions,
         ILogger<ProductMatcher> logger)
     {
         _db = db;
         _embedder = embedder;
+        _visualSearch = visualSearch;
+        _fetcher = fetcher;
+        _http = http;
         _options = options.Value;
+        _searchOptions = searchOptions.Value;
         _logger = logger;
     }
 
-    public bool Enabled => _options.Enabled && _embedder.Enabled;
+    public bool Enabled => _visualSearch.Enabled || (_options.Enabled && _embedder.Enabled);
 
     /// <summary>
     /// Matches a batch of detected items that have none yet. Returns how many items
@@ -67,6 +79,15 @@ public class ProductMatcher
             if (force && item.Alternatives.Count > 0)
             {
                 _db.ShoppingAlternatives.RemoveRange(item.Alternatives);
+            }
+
+            // Google first, when we have a key for it: it answers with shops the
+            // wearer can buy from at today's prices, which our own catalogue — a
+            // fixed dataset with neither links nor prices — never can.
+            if (_visualSearch.Enabled && await MatchOnlineAsync(item, ct))
+            {
+                matched++;
+                continue;
             }
 
             var categories = ProductCategories.For(item.Label);
@@ -128,6 +149,131 @@ public class ProductMatcher
 
         await _db.SaveChangesAsync(ct);
         return (pending.Count, matched);
+    }
+
+    /// <summary>
+    /// Looks the garment up in the shops. Returns whether anything was found.
+    /// </summary>
+    private async Task<bool> MatchOnlineAsync(DetectedItemEntity item, CancellationToken ct)
+    {
+        // A detection the detector half believed is usually a garment seen from
+        // behind, or half of one. Searching the shops for it spends a lookup to
+        // find something that looks like whatever the mask happened to keep — a
+        // shirt with a bag strap across it comes back as a holster, correctly.
+        if (item.Score < _searchOptions.MinDetectionScore) return false;
+
+        var imageUrl = PublicUrlFor(item.CutoutImageId);
+
+        // Only a cutout is worth sending. A crop still holding pavement and a
+        // forearm comes back with pavement and forearms.
+        if (imageUrl is null) return false;
+
+        var matches = await _visualSearch.FindAsync(imageUrl, ct);
+        if (matches.Count == 0) return false;
+
+        // Google finds what looks similar anywhere, which includes things that are
+        // not clothes: the first jacket it was asked about came back as a shoulder
+        // holster, because a dark strappy shape is a dark strappy shape. So its
+        // candidates are checked against the garment the way the catalogue is —
+        // Lens for reach, CLIP for whether it is actually the same kind of thing.
+        var verified = await VerifyAsync(item, matches, ct);
+        if (verified.Count == 0)
+        {
+            _logger.LogInformation(
+                "{Label}: {Found} shop results, none of them the garment.",
+                item.Label, matches.Count);
+            return false;
+        }
+
+        matches = verified;
+
+        foreach (var match in matches)
+        {
+            _db.ShoppingAlternatives.Add(new ShoppingAlternativeEntity
+            {
+                DetectedItemId = item.Id,
+                Brand = Trim(match.Source, 120),
+                Name = Trim(match.Title, 200),
+                Price = match.Price,
+                Currency = Trim(match.Currency, 8),
+                ImageUrl = Trim(match.ThumbnailUrl, 1024),
+                StoreUrl = Trim(match.Link, 1024)
+            });
+        }
+
+        _logger.LogInformation(
+            "{Label} found at {Shop}: {Title}", item.Label, matches[0].Source, matches[0].Title);
+
+        return true;
+    }
+
+    /// <summary>
+    /// Keeps the shop results that actually look like the garment, best first.
+    ///
+    /// Each candidate's thumbnail is embedded and compared with the cut-out. It is
+    /// the same comparison the catalogue uses, doing the opposite job: there it
+    /// chose the nearest of a fixed set, here it throws out what Google dragged in.
+    /// </summary>
+    private async Task<List<VisualMatch>> VerifyAsync(
+        DetectedItemEntity item, IReadOnlyList<VisualMatch> matches, CancellationToken ct)
+    {
+        var vector = await EmbedItemAsync(item, ct);
+        if (vector is null) return matches.ToList();   // nothing to check against
+
+        var scored = new List<(VisualMatch Match, double Score)>();
+
+        foreach (var match in matches)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // What the seller calls it, before what it looks like.
+            if (!ProductCategories.TitleFits(item.Label, match.Title)) continue;
+
+            var thumbnail = await _fetcher.FetchAsync(match.ThumbnailUrl, ct);
+            if (thumbnail is null) continue;
+
+            var candidate = await _embedder.EmbedAsync(thumbnail, ct);
+            if (candidate is null) continue;
+
+            var score = ClipEmbedder.Similarity(vector, candidate);
+            if (score >= _searchOptions.MinSimilarity) scored.Add((match, score));
+        }
+
+        return scored
+            .OrderByDescending(x => x.Score)
+            .Take(_options.Alternatives)
+            .Select(x => x.Match)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Absolute URL for one of our images, as the outside world would fetch it —
+    /// the search service has to be able to reach the picture we are asking about.
+    /// </summary>
+    private string? PublicUrlFor(string? imageId)
+    {
+        if (string.IsNullOrWhiteSpace(imageId)) return null;
+
+        var configured = _searchOptions.PublicBaseUrl;
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return $"{configured.TrimEnd('/')}/api/images/{imageId}";
+        }
+
+        var request = _http.HttpContext?.Request;
+        if (request is null) return null;
+
+        // A loopback address is no use to a service that has to fetch the picture.
+        if (request.Host.Host is "localhost" or "127.0.0.1") return null;
+
+        return $"{request.Scheme}://{request.Host}/api/images/{imageId}";
+    }
+
+    private static string Trim(string? value, int max)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var trimmed = value.Trim();
+        return trimmed.Length <= max ? trimmed : trimmed[..max];
     }
 
     /// <summary>
