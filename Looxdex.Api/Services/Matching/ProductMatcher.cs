@@ -61,6 +61,7 @@ public class ProductMatcher
 
         var pending = await _db.DetectedItems
             .Include(d => d.Alternatives)
+            .Include(d => d.FeedPost)
             .Where(d => force || d.MatchAttemptedAt == null)
             .OrderByDescending(d => d.Id)
             .Take(Math.Clamp(batchSize, 1, 100))
@@ -162,25 +163,70 @@ public class ProductMatcher
         // behind, or half of one. Searching the shops for it spends a lookup to
         // find something that looks like whatever the mask happened to keep — a
         // shirt with a bag strap across it comes back as a holster, correctly.
-        if (item.Score < _searchOptions.MinDetectionScore) return false;
+        //
+        // Except on a flat-lay, where a low score says nothing about whether the
+        // thing is there — only that the detector could not name it, which is the
+        // very thing the shops are being asked.
+        if (item.FeedPost is { HasPerson: true } && item.Score < _searchOptions.MinDetectionScore)
+        {
+            return false;
+        }
 
         // The cut-out when there is one. For the items a cut-out can never be made
         // of — a watch on a wrist, glasses on a face, which the parser has no class
         // for — a plain crop is the only picture there is, and Lens happens to be
         // very good at precisely those. The seller's title still has to agree, so a
         // crop full of pavement returns nothing rather than nonsense.
-        var searchImageId = item.CutoutImageId;
+        string? imageUrl;
 
-        if (string.IsNullOrWhiteSpace(searchImageId) && CanSearchByCrop(item))
+        if (item.FeedPost is { HasPerson: false })
         {
-            searchImageId = await EnsureCropAsync(item, ct);
+            // A flat-lay is a photograph of one thing. The detection box is a guess
+            // made outside the detector's training, so the whole picture is what
+            // gets searched — which is also exactly what a person would do with it.
+            imageUrl = item.FeedPost.ImageUrl;
+        }
+        else
+        {
+            var searchImageId = item.CutoutImageId;
+
+            if (string.IsNullOrWhiteSpace(searchImageId) && CanSearchByCrop(item))
+            {
+                searchImageId = await EnsureCropAsync(item, ct);
+            }
+
+            imageUrl = PublicUrlFor(searchImageId);
         }
 
-        var imageUrl = PublicUrlFor(searchImageId);
-        if (imageUrl is null) return false;
+        if (string.IsNullOrWhiteSpace(imageUrl)) return false;
 
         var matches = await _visualSearch.FindAsync(imageUrl, ct);
         if (matches.Count == 0) return false;
+
+        // In a photograph with nobody in it the detector's label is a guess made
+        // outside its training. The shops have just looked at the same picture and
+        // agreed on what it is, so their word replaces the guess — and it is their
+        // word the rest of the matching is then checked against.
+        if (item.FeedPost is { HasPerson: false })
+        {
+            var named = ProductCategories.LabelFromTitles(matches.Select(m => m.Title));
+
+            if (named is not null && !string.Equals(named, item.Label, StringComparison.OrdinalIgnoreCase))
+            {
+                var label = FashionpediaLabels.Resolve(named);
+
+                if (label is not null)
+                {
+                    _logger.LogInformation(
+                        "Post {PostId}: the shops call this a {Named}, not a {Guess}.",
+                        item.FeedPostId, named, item.Label);
+
+                    item.Label = named;
+                    item.LabelHe = label.LabelHe;
+                    item.Category = label.Category;
+                }
+            }
+        }
 
         // Google finds what looks similar anywhere, which includes things that are
         // not clothes: the first jacket it was asked about came back as a shoulder
@@ -231,14 +277,32 @@ public class ProductMatcher
         var vector = await EmbedItemAsync(item, ct);
         if (vector is null) return matches.ToList();   // nothing to check against
 
+        // Which bar applies depends on what the search was made with. The high bar
+        // is for a plain crop of a worn photo, which is a photograph being compared
+        // with photographs. A cut-out standing on nothing, and a flat-lay with half
+        // a bedspread in it, are both further from a studio shot than that — same
+        // garment, further apart in the arithmetic.
+        var photographic = !string.IsNullOrWhiteSpace(item.CutoutImageId)
+                           || item.FeedPost is { HasPerson: false };
+
+        var bar = photographic
+            ? _searchOptions.MinCutoutSimilarity
+            : _searchOptions.MinSimilarity;
+
         var scored = new List<(VisualMatch Match, double Score)>();
+        var best = 0.0;
+        var titleRejected = 0;
 
         foreach (var match in matches)
         {
             ct.ThrowIfCancellationRequested();
 
             // What the seller calls it, before what it looks like.
-            if (!ProductCategories.TitleFits(item.Label, match.Title)) continue;
+            if (!ProductCategories.TitleFits(item.Label, match.Title))
+            {
+                titleRejected++;
+                continue;
+            }
 
             var thumbnail = await _fetcher.FetchAsync(match.ThumbnailUrl, ct);
             if (thumbnail is null) continue;
@@ -247,7 +311,17 @@ public class ProductMatcher
             if (candidate is null) continue;
 
             var score = ClipEmbedder.Similarity(vector, candidate);
-            if (score >= _searchOptions.MinSimilarity) scored.Add((match, score));
+            if (score > best) best = score;
+
+            if (score >= bar) scored.Add((match, score));
+        }
+
+        if (scored.Count == 0)
+        {
+            _logger.LogInformation(
+                "{Label}: {Total} results, {Titles} wrong kind, best likeness {Best:F3} "
+                + "against a bar of {Bar:F2}.",
+                item.Label, matches.Count, titleRejected, best, bar);
         }
 
         return scored

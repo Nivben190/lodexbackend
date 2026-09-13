@@ -153,6 +153,7 @@ public class DetectionWorker : BackgroundService
                     // the feed can show product tiles instead of slices of the scene.
                     var pass = await cutouts.RenderAsync(photo, hits, ct);
                     var rendered = pass.Items;
+                    post.HasPerson = pass.PersonPresent;
                     var claimed = new List<MaskFootprint>();
 
                     for (var i = 0; i < hits.Count; i++)
@@ -160,11 +161,14 @@ public class DetectionWorker : BackgroundService
                         var h = hits[i];
                         rendered.TryGetValue(i, out var render);
 
-                        // Nobody in the photo: both models are guessing outside what
-                        // they were trained on, so only an unmistakable detection
-                        // survives. This is the difference between a handbag filed as
-                        // a handbag and a handbag filed as a pair of trousers.
-                        if (!pass.PersonPresent && h.Score < _cutoutOptions.FlatLayScore)
+                        // Nobody in the photo. Both models are working outside what
+                        // they were trained on, so the label is not to be trusted —
+                        // but the thing in the picture is real, and the shops can
+                        // say what it is. Only the best guess is kept, and matching
+                        // renames it from what the sellers call it.
+                        if (!pass.PersonPresent
+                            && h.Score < _cutoutOptions.FlatLayScore
+                            && (i > 0 || h.Score < _cutoutOptions.FlatLayFloor))
                         {
                             _logger.LogInformation(
                                 "Dropped {Label} at {Score:P0} on post {PostId}: no one in the photo.",

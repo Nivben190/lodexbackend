@@ -263,6 +263,38 @@ public static class ProductCategories
         ["glove"] = new[] { "glove", "mitten" }
     };
 
+    /// <summary>
+    /// Reads the shops' own titles and says what the thing is.
+    ///
+    /// For a photograph with nobody in it, this is the only reliable name
+    /// available: the detector is guessing outside its training and the parser has
+    /// no person to parse, while a dozen shops have all just called it a handbag.
+    /// </summary>
+    public static string? LabelFromTitles(IEnumerable<string> titles)
+    {
+        var votes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var title in titles)
+        {
+            if (string.IsNullOrWhiteSpace(title)) continue;
+
+            foreach (var (label, words) in TitleWords)
+            {
+                if (words.Any(w => title.Contains(w, StringComparison.OrdinalIgnoreCase)))
+                {
+                    votes[label] = votes.GetValueOrDefault(label) + 1;
+                }
+            }
+        }
+
+        if (votes.Count == 0) return null;
+
+        var winner = votes.OrderByDescending(v => v.Value).First();
+
+        // One shop calling it something is not a verdict.
+        return winner.Value >= 2 ? winner.Key : null;
+    }
+
     /// <summary>Whether a shop's title describes the same kind of garment.</summary>
     public static bool TitleFits(string? label, string? title)
     {

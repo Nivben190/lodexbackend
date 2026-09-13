@@ -77,6 +77,15 @@ public class FeedPostEntity
     public long Rank { get; set; }
 
     /// <summary>
+    /// Whether anyone is wearing anything in this photograph.
+    ///
+    /// False for a flat-lay — a bag on a bed, a coat on a hanger — where the
+    /// clothing parser has no person to parse and the detector is working outside
+    /// what it was trained on. Such a look is labelled by the shops instead.
+    /// </summary>
+    public bool HasPerson { get; set; } = true;
+
+    /// <summary>
     /// Official embed markup from the provider, for showing the source post where
     /// it was published rather than restating it ourselves.
     ///

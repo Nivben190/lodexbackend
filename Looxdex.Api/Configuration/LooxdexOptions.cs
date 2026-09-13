@@ -169,6 +169,12 @@ public class GarmentCutoutOptions
     /// </summary>
     public double FlatLayScore { get; set; } = 0.90;
 
+    /// <summary>
+    /// The floor under which even a flat-lay's best guess is not worth keeping.
+    /// Above it the item is kept unnamed, for the shops to identify.
+    /// </summary>
+    public double FlatLayFloor { get; set; } = 0.40;
+
     /// <summary>Transparent margin inside the tile, as a fraction of its side.</summary>
     public double TileInset { get; set; } = 0.09;
 
@@ -250,11 +256,23 @@ public class VisualSearchOptions
     public int MaxResults { get; set; } = 12;
 
     /// <summary>
-    /// How alike a shop's photograph must be to the garment before it is offered.
-    /// Google is generous about what counts as similar; this is where that
-    /// generosity is spent rather than passed on.
+    /// How alike a shop's photograph must be to a crop of the look before it is
+    /// offered. Google is generous about what counts as similar; this is where
+    /// that generosity is spent rather than passed on.
     /// </summary>
     public double MinSimilarity { get; set; } = 0.80;
+
+    /// <summary>
+    /// The same bar, for when the search was made with a cut-out.
+    ///
+    /// Lower on purpose. A cut-out is a garment with its wearer erased, standing
+    /// on nothing; a shop's photograph is the same garment lit, pressed and hung.
+    /// They score further apart than two photographs of a street do, whatever they
+    /// are of — so holding both to one bar quietly rejects the cut-outs. A pair of
+    /// brown trousers came back from twelve shops and scored 0.791 against a bar of
+    /// 0.80, and every one of the twelve was thrown away.
+    /// </summary>
+    public double MinCutoutSimilarity { get; set; } = 0.72;
 
     /// <summary>
     /// How sure the detector has to have been before the shops are searched.
