@@ -294,7 +294,14 @@ public class ProductMatcher
         // outside its training. The shops have just looked at the same picture and
         // agreed on what it is, so their word replaces the guess — and it is their
         // word the rest of the matching is then checked against.
-        if (item.FeedPost is { HasPerson: false })
+        // Only a photograph of one thing may be renamed by the shops. "No person"
+        // is a weaker signal than it looks: an outfit shot cropped below the face,
+        // with long sleeves and trousers, shows the parser nothing but cloth and it
+        // reports an empty room. Renaming every item on such a post left one look
+        // listing its shoe, jacket, belt and bag all as "trousers", each renamed by
+        // its own search. A photograph with five garments in it is an outfit,
+        // whoever is or is not visible in it.
+        if (item.FeedPost is { HasPerson: false } && await IsSingleItemAsync(item, ct))
         {
             var named = ProductCategories.LabelFromTitles(matches.Select(m => m.Title));
 
@@ -430,6 +437,10 @@ public class ProductMatcher
             .Select(x => x.Match)
             .ToList();
     }
+
+    /// <summary>Whether this look holds exactly one detected thing.</summary>
+    private async Task<bool> IsSingleItemAsync(DetectedItemEntity item, CancellationToken ct) =>
+        await _db.DetectedItems.CountAsync(d => d.FeedPostId == item.FeedPostId, ct) == 1;
 
     /// <summary>
     /// Whether a plain crop is worth searching with. Either the segmenter has no
