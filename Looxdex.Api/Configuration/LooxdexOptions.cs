@@ -216,11 +216,17 @@ public class ProductMatchOptions
 
     public bool Enabled { get; set; } = true;
 
-    /// <summary>CLIP ViT-B/32 vision tower, quantised.</summary>
+    /// <summary>
+    /// CLIP trained on fashion rather than on the web at large.
+    ///
+    /// The generic model knows that a garment is a garment; this one was trained
+    /// to tell one garment from another, which is the whole question being asked
+    /// of it — whether the jacket in a shop's photograph is the jacket in ours.
+    /// </summary>
     public string ModelUrl { get; set; } =
-        "https://huggingface.co/Xenova/clip-vit-base-patch32/resolve/main/onnx/vision_model_quantized.onnx";
+        "https://huggingface.co/Marqo/marqo-fashionCLIP/resolve/main/onnx/vision_model_quantized.onnx";
 
-    public string FileName { get; set; } = "clip-vit-base-patch32-vision-quantized.onnx";
+    public string FileName { get; set; } = "marqo-fashion-clip-vision-quantized.onnx";
 
     /// <summary>How many products to keep per detected item.</summary>
     public int Alternatives { get; set; } = 4;

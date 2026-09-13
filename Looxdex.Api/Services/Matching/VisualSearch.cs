@@ -68,7 +68,14 @@ public class SerpApiVisualSearch : IVisualSearch
     {
         "instagram", "pinterest", "tumblr", "facebook", "twitter", "x.com",
         "reddit", "youtube", "tiktok", "blogspot", "wordpress", "wikipedia",
-        "lookastic", "flickr"
+        "lookastic", "flickr",
+
+        // Not shops at all: stock libraries sell the photograph, and asset shops
+        // sell a 3D model of the thing. One look matched a pair of trousers to a
+        // TurboSquid model of a pair of trousers.
+        "turbosquid", "cgtrader", "sketchfab", "shutterstock", "alamy",
+        "gettyimages", "istockphoto", "dreamstime", "123rf", "depositphotos",
+        "vecteezy", "freepik", "adobe.com/stock"
     };
 
     public async Task<IReadOnlyList<VisualMatch>> FindAsync(string imageUrl, CancellationToken ct)
