@@ -264,6 +264,41 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
     }
 
     /// <summary>
+    /// Erases the wearer from a garment's stencil: hands, arms, legs, face, hair.
+    ///
+    /// Erased generously — one cell out in every direction — because the boundary
+    /// between a wrist and a cuff is exactly where the parser is least certain,
+    /// and a sliver of forearm left on the tile is worse than a millimetre of
+    /// sleeve lost from it.
+    /// </summary>
+    private static void RemoveSkin(float[,] membership, byte[,] labels, int height, int width)
+    {
+        ReadOnlySpan<byte> body = stackalloc byte[] { 2, 11, 12, 13, 14, 15 };
+
+        var skin = new bool[height, width];
+
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            if (!body.Contains(labels[y, x])) continue;
+
+            for (var dy = -1; dy <= 1; dy++)
+            for (var dx = -1; dx <= 1; dx++)
+            {
+                var ny = y + dy;
+                var nx = x + dx;
+                if (ny >= 0 && nx >= 0 && ny < height && nx < width) skin[ny, nx] = true;
+            }
+        }
+
+        for (var y = 0; y < height; y++)
+        for (var x = 0; x < width; x++)
+        {
+            if (skin[y, x]) membership[y, x] = 0f;
+        }
+    }
+
+    /// <summary>
     /// Whether the photo has a person in it, by looking for the parts of one:
     /// a face, hair, an arm, a leg. Their absence means this is a flat-lay or a
     /// product shot, and everything the parser says about it should be distrusted.
@@ -358,6 +393,14 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
                 guide[i] = (0.299f * pixel.R + 0.587f * pixel.G + 0.114f * pixel.B) / 255f;
             }
         }
+
+        // Skin, hair and face are cut out of the stencil before it is refined.
+        // The mask says "upper-clothes" only where cloth is, but the refinement
+        // below follows edges in the photograph, and an arm resting against a
+        // sleeve is one continuous warm shape — so without this the hand comes
+        // along with the shirt, which is exactly what nobody wants to see on a
+        // product tile.
+        RemoveSkin(membership, labels, mapHeight, mapWidth);
 
         // Then pull that stencil onto the garment's real edge. The mask knows where
         // the trousers are to within about a finger's width; the photograph knows
