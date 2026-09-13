@@ -132,6 +132,14 @@ public class DetectedItemEntity
     public DateTime? CutoutAttemptedAt { get; set; }
 
     /// <summary>
+    /// A plain crop of the detection box, kept for the items a cut-out can never
+    /// be made of — a watch, a pair of glasses — so that they can still be looked
+    /// up in the shops, which is the only way they get a picture at all.
+    /// </summary>
+    [MaxLength(32)]
+    public string? CropImageId { get; set; }
+
+    /// <summary>
     /// When this item was last looked for in the shops, whether or not anything
     /// was found. Without it the same handful of unmatchable items is examined on
     /// every pass and the rest are never reached.

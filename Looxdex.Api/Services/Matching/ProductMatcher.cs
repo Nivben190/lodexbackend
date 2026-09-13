@@ -3,6 +3,7 @@ using Looxdex.Api.Data;
 using Looxdex.Api.Entities;
 using Looxdex.Api.Services.Detection;
 using Microsoft.EntityFrameworkCore;
+using SixLabors.ImageSharp.Processing;
 using Microsoft.Extensions.Options;
 
 namespace Looxdex.Api.Services.Matching;
@@ -163,10 +164,19 @@ public class ProductMatcher
         // shirt with a bag strap across it comes back as a holster, correctly.
         if (item.Score < _searchOptions.MinDetectionScore) return false;
 
-        var imageUrl = PublicUrlFor(item.CutoutImageId);
+        // The cut-out when there is one. For the items a cut-out can never be made
+        // of — a watch on a wrist, glasses on a face, which the parser has no class
+        // for — a plain crop is the only picture there is, and Lens happens to be
+        // very good at precisely those. The seller's title still has to agree, so a
+        // crop full of pavement returns nothing rather than nonsense.
+        var searchImageId = item.CutoutImageId;
 
-        // Only a cutout is worth sending. A crop still holding pavement and a
-        // forearm comes back with pavement and forearms.
+        if (string.IsNullOrWhiteSpace(searchImageId) && CanSearchByCrop(item))
+        {
+            searchImageId = await EnsureCropAsync(item, ct);
+        }
+
+        var imageUrl = PublicUrlFor(searchImageId);
         if (imageUrl is null) return false;
 
         var matches = await _visualSearch.FindAsync(imageUrl, ct);
@@ -248,6 +258,83 @@ public class ProductMatcher
     }
 
     /// <summary>
+    /// Whether a plain crop is worth searching with. Either the segmenter has no
+    /// class for this kind of thing at all, or the detector was sure enough that
+    /// the failed mask is the mask's fault rather than evidence of nothing there.
+    /// </summary>
+    private static bool CanSearchByCrop(DetectedItemEntity item) =>
+        ProductCategories.For(item.Label).Length > 0
+        && (!GarmentCutoutService.IsSegmentable(item.Label) || item.Score >= 0.9);
+
+    /// <summary>
+    /// Crops the detection box out of the look and keeps it, returning its id.
+    /// Padded a little, because a box drawn tight around a watch face loses the
+    /// strap, and the strap is most of what identifies a watch.
+    /// </summary>
+    private async Task<string?> EnsureCropAsync(DetectedItemEntity item, CancellationToken ct)
+    {
+        if (!string.IsNullOrWhiteSpace(item.CropImageId)) return item.CropImageId;
+
+        var post = await _db.FeedPosts
+            .AsNoTracking()
+            .Where(p => p.Id == item.FeedPostId)
+            .Select(p => p.ImageUrl)
+            .FirstOrDefaultAsync(ct);
+
+        if (string.IsNullOrWhiteSpace(post)) return null;
+
+        var photo = await _fetcher.FetchAsync(post, ct);
+        if (photo is null) return null;
+
+        try
+        {
+            using var image = SixLabors.ImageSharp.Image.Load<SixLabors.ImageSharp.PixelFormats.Rgb24>(photo);
+
+            const double pad = 0.18;
+            var x = item.BoxX / 100 * image.Width;
+            var y = item.BoxY / 100 * image.Height;
+            var w = item.BoxWidth / 100 * image.Width;
+            var h = item.BoxHeight / 100 * image.Height;
+
+            var region = SixLabors.ImageSharp.Rectangle.Intersect(
+                new SixLabors.ImageSharp.Rectangle(
+                    (int)(x - w * pad), (int)(y - h * pad),
+                    (int)(w * (1 + pad * 2)), (int)(h * (1 + pad * 2))),
+                image.Bounds);
+
+            if (region.Width < 48 || region.Height < 48) return null;
+
+            using var crop = image.Clone(c => c.Crop(region));
+            using var buffer = new MemoryStream();
+            crop.Save(buffer, new SixLabors.ImageSharp.Formats.Jpeg.JpegEncoder { Quality = 88 });
+
+            var id = Guid.NewGuid().ToString("N");
+
+            _db.UploadedImages.Add(new UploadedImageEntity
+            {
+                Id = id,
+                OwnerKey = "system:crop",
+                ContentType = "image/jpeg",
+                Data = buffer.ToArray(),
+                ByteSize = (int)buffer.Length,
+                CreatedAt = DateTime.UtcNow
+            });
+
+            item.CropImageId = id;
+
+            // Saved now: the search is about to be told where to fetch it from.
+            await _db.SaveChangesAsync(ct);
+
+            return id;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not crop item {Id}.", item.Id);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Absolute URL for one of our images, as the outside world would fetch it —
     /// the search service has to be able to reach the picture we are asking about.
     /// </summary>
@@ -284,11 +371,12 @@ public class ProductMatcher
     /// </summary>
     private async Task<float[]?> EmbedItemAsync(DetectedItemEntity item, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(item.CutoutImageId)) return null;
+        var id = item.CutoutImageId ?? item.CropImageId;
+        if (string.IsNullOrWhiteSpace(id)) return null;
 
         var image = await _db.UploadedImages
             .AsNoTracking()
-            .Where(i => i.Id == item.CutoutImageId)
+            .Where(i => i.Id == id)
             .Select(i => i.Data)
             .FirstOrDefaultAsync(ct);
 

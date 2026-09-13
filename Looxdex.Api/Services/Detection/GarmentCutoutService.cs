@@ -121,6 +121,10 @@ public class GarmentCutoutService : IGarmentCutoutService, IDisposable
         ["hat"] = new[] { 1 }
     };
 
+    /// <summary>Whether the parser has a class for this kind of garment at all.</summary>
+    public static bool IsSegmentable(string? label) =>
+        label is not null && AtrClasses.ContainsKey(label.Trim());
+
     private readonly ModelProvider _modelProvider;
     private readonly GarmentCutoutOptions _options;
     private readonly ILogger<GarmentCutoutService> _logger;
