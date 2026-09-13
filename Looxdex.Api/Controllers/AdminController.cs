@@ -61,9 +61,10 @@ public class AdminController : ControllerBase
     public async Task<ActionResult> Match(
         [FromQuery] int batchSize = 25,
         [FromQuery] bool force = false,
+        [FromQuery] bool online = true,
         CancellationToken ct = default)
     {
-        var (examined, matched) = await _matcher.RunAsync(batchSize, force, ct);
+        var (examined, matched) = await _matcher.RunAsync(batchSize, force, online, ct);
         return Ok(new { examined, matched });
     }
 
@@ -77,6 +78,19 @@ public class AdminController : ControllerBase
     {
         var (items, moved) = await _matcher.RestageAsync(batchSize, ct);
         return Ok(new { items, moved });
+    }
+
+    /// <summary>
+    /// Re-reads catalogue photographs with the current model. Free: no search is
+    /// performed, and it must be run after changing the model or the catalogue
+    /// answers in a language nobody is asking in.
+    /// </summary>
+    [HttpPost("reembed")]
+    public async Task<ActionResult> ReEmbed(
+        [FromQuery] int batchSize = 100, CancellationToken ct = default)
+    {
+        var done = await _catalogue.ReEmbedAsync(batchSize, ct);
+        return Ok(new { reEmbedded = done });
     }
 
     /// <summary>How full the catalogue is, by category.</summary>

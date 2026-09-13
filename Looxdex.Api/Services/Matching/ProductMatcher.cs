@@ -54,8 +54,12 @@ public class ProductMatcher
     /// Matches a batch of detected items that have none yet. Returns how many items
     /// were looked at and how many came away with something.
     /// </summary>
+    /// <param name="online">
+    /// Whether the metered search may be used. False matches from our own
+    /// catalogue alone, which costs nothing and can be run as often as wanted.
+    /// </param>
     public async Task<(int Examined, int Matched)> RunAsync(
-        int batchSize, bool force, CancellationToken ct)
+        int batchSize, bool force, bool online, CancellationToken ct)
     {
         if (!Enabled) return (0, 0);
 
@@ -90,7 +94,7 @@ public class ProductMatcher
             // Google first, when we have a key for it: it answers with shops the
             // wearer can buy from at today's prices, which our own catalogue — a
             // fixed dataset with neither links nor prices — never can.
-            if (_visualSearch.Enabled && await MatchOnlineAsync(item, ct))
+            if (online && _visualSearch.Enabled && await MatchOnlineAsync(item, ct))
             {
                 matched++;
                 continue;
@@ -106,17 +110,19 @@ public class ProductMatcher
                 .Where(p => categories.Contains(p.Category, StringComparer.OrdinalIgnoreCase))
                 .ToList();
 
-            // Colour is known on both sides and CLIP is careless with it — a
-            // leopard trouser and a pink running short sit close together in its
-            // space, because both are "a pair of trousers on white". Where both
-            // colours are known, they have to agree.
+            // Colour is known on both sides and the model is careless with it — a
+            // leopard trouser and a pink running short sit close together, because
+            // both are "trousers on white". Where both colours are known they must
+            // agree, but only while that leaves a real choice: in a thin catalogue
+            // "black trousers" came down to eight garments, and the nearest of
+            // eight is not a match, it is whatever was left.
             if (!string.IsNullOrWhiteSpace(item.ColorName))
             {
                 var sameColour = candidates
                     .Where(p => string.Equals(p.Colour, item.ColorName, StringComparison.Ordinal))
                     .ToList();
 
-                if (sameColour.Count > 0) candidates = sameColour;
+                if (sameColour.Count >= 20) candidates = sameColour;
             }
 
             var best = candidates
@@ -129,7 +135,12 @@ public class ProductMatcher
             if (best.Count == 0)
             {
                 _logger.LogInformation(
-                    "Nothing close enough for {Label} (item {Id}).", item.Label, item.Id);
+                    "Nothing close enough for {Label} (item {Id}); best was {Best:F3} "
+                    + "against {Bar:F2} across {Count} candidates.",
+                    item.Label, item.Id,
+                    candidates.Select(p => ClipEmbedder.Similarity(vector, p.Embedding))
+                        .DefaultIfEmpty(0).Max(),
+                    _options.MinSimilarity, candidates.Count);
                 continue;
             }
 

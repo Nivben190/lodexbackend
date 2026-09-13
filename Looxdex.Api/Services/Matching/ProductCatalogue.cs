@@ -91,6 +91,7 @@ public class ProductCatalogue
 
         _db.Products.Add(new ProductEntity
         {
+            EmbeddedWith = _embedder.Signature,
             ExternalId = import.ExternalId,
             Source = import.Source,
             Name = Trim(name, 200),
@@ -172,6 +173,50 @@ public class ProductCatalogue
         {
             return string.Empty;
         }
+    }
+
+    /// <summary>
+    /// Re-reads the catalogue's photographs with whatever model is configured now.
+    ///
+    /// An embedding only means anything next to others made the same way, so
+    /// changing the model orphans every vector already stored: the catalogue would
+    /// go on answering, in a language the question is no longer asked in.
+    /// </summary>
+    public async Task<int> ReEmbedAsync(int batchSize, CancellationToken ct)
+    {
+        var stale = await _db.Products
+            .Where(p => p.EmbeddedWith != _embedder.Signature)
+            .OrderBy(p => p.Id)
+            .Take(Math.Clamp(batchSize, 1, 500))
+            .ToListAsync(ct);
+
+        if (stale.Count == 0) return 0;
+
+        var ids = stale.Select(p => p.ImageId).ToList();
+
+        var images = await _db.UploadedImages
+            .AsNoTracking()
+            .Where(i => ids.Contains(i.Id))
+            .ToDictionaryAsync(i => i.Id, i => i.Data, ct);
+
+        var done = 0;
+
+        foreach (var product in stale)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (!images.TryGetValue(product.ImageId, out var bytes)) continue;
+
+            var embedding = await _embedder.EmbedAsync(bytes, ct);
+            if (embedding is null) continue;
+
+            product.Embedding = embedding;
+            product.EmbeddedWith = _embedder.Signature;
+            done++;
+        }
+
+        await _db.SaveChangesAsync(ct);
+        return done;
     }
 
     private static string Trim(string? value, int max)

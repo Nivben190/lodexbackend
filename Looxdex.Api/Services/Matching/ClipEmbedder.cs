@@ -18,6 +18,9 @@ public interface IClipEmbedder
     /// Returns null when the model is unavailable or the bytes will not decode.
     /// </summary>
     Task<float[]?> EmbedAsync(byte[] image, CancellationToken ct);
+
+    /// <summary>Names the model, so a stored vector can say what made it.</summary>
+    string Signature { get; }
 }
 
 /// <summary>
@@ -60,6 +63,8 @@ public class ClipEmbedder : IClipEmbedder, IDisposable
     }
 
     public bool Enabled => _options.Enabled;
+
+    public string Signature => _options.FileName;
 
     public async Task<float[]?> EmbedAsync(byte[] image, CancellationToken ct)
     {

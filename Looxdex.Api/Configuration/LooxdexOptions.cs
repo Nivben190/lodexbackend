@@ -235,8 +235,12 @@ public class ProductMatchOptions
     /// Similarity a product must reach to be offered at all. Below it the nearest
     /// thing in the catalogue is not the same garment, and showing it anyway is
     /// worse than showing nothing.
+    ///
+    /// Read against the fashion model's scale, where a plausible garment match
+    /// sits between 0.64 and 0.92. The old 0.86 was set for a general-purpose
+    /// model with a much narrower spread and would reject almost everything here.
     /// </summary>
-    public double MinSimilarity { get; set; } = 0.86;
+    public double MinSimilarity { get; set; } = 0.74;
 
     /// <summary>Products pulled per page while filling the catalogue.</summary>
     public int IngestPageSize { get; set; } = 100;

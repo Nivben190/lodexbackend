@@ -49,5 +49,13 @@ public class ProductEntity
     /// <summary>CLIP embedding of the photograph; the thing matching actually compares.</summary>
     public float[]? Embedding { get; set; }
 
+    /// <summary>
+    /// Which model produced that embedding. Vectors are only comparable with
+    /// others made the same way, so this is what says whether a stored one is
+    /// still worth anything.
+    /// </summary>
+    [MaxLength(80)]
+    public string EmbeddedWith { get; set; } = string.Empty;
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
