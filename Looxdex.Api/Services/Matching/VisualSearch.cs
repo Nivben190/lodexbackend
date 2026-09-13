@@ -59,6 +59,18 @@ public class SerpApiVisualSearch : IVisualSearch
 
     public bool Enabled => _options.Enabled && !string.IsNullOrWhiteSpace(_options.ApiKey);
 
+    /// <summary>
+    /// Places a garment cannot be bought. Lens is happy to answer with a moodboard
+    /// on Instagram or a pin on Pinterest — often the best visual likeness on the
+    /// page, and useless to someone who wants the thing.
+    /// </summary>
+    private static readonly string[] NotShops =
+    {
+        "instagram", "pinterest", "tumblr", "facebook", "twitter", "x.com",
+        "reddit", "youtube", "tiktok", "blogspot", "wordpress", "wikipedia",
+        "lookastic", "flickr"
+    };
+
     public async Task<IReadOnlyList<VisualMatch>> FindAsync(string imageUrl, CancellationToken ct)
     {
         if (!Enabled) return Array.Empty<VisualMatch>();
@@ -105,11 +117,20 @@ public class SerpApiVisualSearch : IVisualSearch
                 // Without somewhere to go and something to show, a result is noise.
                 if (string.IsNullOrWhiteSpace(link) || string.IsNullOrWhiteSpace(thumbnail)) continue;
 
+                var source = Text(match, "source");
+
+                if (NotShops.Any(n =>
+                        link.Contains(n, StringComparison.OrdinalIgnoreCase)
+                        || source.Contains(n, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
                 var (price, currency) = ReadPrice(match);
 
                 results.Add(new VisualMatch(
                     Text(match, "title"),
-                    Text(match, "source"),
+                    source,
                     link,
                     thumbnail,
                     price,
